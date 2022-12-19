@@ -300,6 +300,7 @@ void App::onPwrKey(void *, Button::Event evt) {
 
 int App::run() {
 	initHw();
+	RTC::init();
 	Loop::init();
 	m_mon.init();
 	
@@ -326,10 +327,8 @@ int App::run() {
 	Exti::set(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin, Exti::BOTH, Exti::Callback::make<&App::onDcinChange>(*this));
 	Exti::set(Pinout::VBAT_ADC.port, Pinout::VBAT_ADC.pin, Exti::BOTH, Exti::Callback::make<&App::onBatChange>(*this));
 	
-	LOGD("\r\n\r\nPMIC started!\r\n");
-	
-	RTC::init();
-	RTC::time();
+	LOGD("----------------------------------------------------------------\r\n");
+	LOGD("PMIC started!\r\n");
 	
 	Loop::run();
 	

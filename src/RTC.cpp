@@ -19,7 +19,7 @@ void RTC::init() {
 	rtc_unlock();
 	rtc_set_init_flag();
 	rtc_wait_for_init_ready();
-	rtc_set_prescaler(0xF9, 0x7F);
+	rtc_set_prescaler(20000, 1);
 	rtc_set_am_format();
 	rtc_clear_init_flag();
 	rtc_lock();
