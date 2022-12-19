@@ -1,0 +1,6 @@
+set style enabled on
+monitor connect_srst enable
+monitor swdp_scan
+attach 1
+load
+kill

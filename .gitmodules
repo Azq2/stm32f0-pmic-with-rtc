@@ -1,0 +1,9 @@
+[submodule "libopencm3"]
+	path = lib/libopencm3
+	url = https://github.com/libopencm3/libopencm3
+[submodule "lib/printf"]
+	path = lib/printf
+	url = https://github.com/eyalroz/printf
+[submodule "lib/delegate"]
+	path = lib/delegate
+	url = https://github.com/rosbacke/delegate
