@@ -11,6 +11,7 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
 
+static uint32_t critical_nesting = 0;
 static uint32_t uart_for_prinf = 0;
 
 void uart_simple_setup(uint32_t usart, uint32_t baudrate, bool use_for_printf) {
@@ -24,6 +25,20 @@ void uart_simple_setup(uint32_t usart, uint32_t baudrate, bool use_for_printf) {
 	
 	if (use_for_printf)
 		uart_for_prinf = usart;
+}
+
+void ENTER_CRITICAL(void) {
+    DISABLE_INTERRUPTS();
+    critical_nesting++;
+    __asm__ volatile ("dsb" ::: "memory");
+    __asm__ volatile ("isb");
+}
+
+void EXIT_CRITICAL(void) {
+	critical_nesting--;
+	
+	if (critical_nesting == 0)
+		ENABLE_INTERRUPTS();
 }
 
 extern "C"

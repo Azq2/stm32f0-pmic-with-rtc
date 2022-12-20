@@ -19,6 +19,18 @@
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/adc.h>
 #include <libopencm3/stm32/dma.h>
+#include <libopencm3/stm32/rtc.h>
+#include <libopencm3/stm32/pwr.h>
+
+bool App::setStateBit(uint32_t bit, bool value) {
+	bool is_changed = (value != is(bit));
+	if (value) {
+		m_state |= bit;
+	} else {
+		m_state &= ~bit;
+	}
+	return is_changed;
+}
 
 void App::initHw() {
 	Gpio::setAllAnalog();
@@ -84,6 +96,8 @@ void App::monitorTask(void *) {
 		LOGD("DCIN %s!\r\n", is(DCIN_PRESENT) ? "connected" : "disconnected");
 		
 		if (is(DCIN_PRESENT)) {
+			m_dcin_connected = Loop::ms();
+			
 			// New power source plugged?
 			if (m_last_chrg_failure == CHRG_FAIL_BAD_DCIN) {
 				m_last_chrg_failure = CHRG_FAIL_NO_DCIN;
@@ -94,10 +108,8 @@ void App::monitorTask(void *) {
 		}
 	}
 	
-	if (is(DCIN_PRESENT)) {
-		if (setStateBit(DCIN_GOOD, m_mon.isDcinGood()))
-			LOGD("DCIN voltage is %s [%d mV]\r\n", is(DCIN_GOOD) ? "OK" : "BAD", m_mon.getDcin());
-	}
+	if (setStateBit(DCIN_GOOD, is(DCIN_PRESENT) && m_mon.isDcinGood()))
+		LOGD("DCIN voltage is %s [%d mV]\r\n", is(DCIN_GOOD) ? "OK" : "BAD", m_mon.getDcin());
 	
 	if (setStateBit(BAT_PRESENT, m_mon.isBatPresent()))
 		LOGD("Battery %s!\r\n", is(BAT_PRESENT) ? "connected" : "disconnected");
@@ -153,9 +165,32 @@ void App::monitorTask(void *) {
 		next_timeout = 500;
 	} else if (is(DCIN_GOOD)) {
 		next_timeout = 1000;
+	} else if (is(DCIN_PRESENT) && Loop::ms() - m_dcin_connected <= 5000) {
+		next_timeout = 1000;
+	} else if (!is(POWER_ON) && !is(DCIN_PRESENT)) {
+		bool allow_sleep = (
+			!gpio_get(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin) &&
+			!gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin)
+		);
+		if (allow_sleep) {
+			allowDeepSleep(true);
+			return;
+		}
 	}
 	
+	LOGD("next_timeout=%ld\r\n", next_timeout);
+	
 	m_task_analog_mon.setTimeout(next_timeout);
+}
+
+void App::allowDeepSleep(bool flag) {
+	if (flag) {
+		m_task_analog_mon.cancel();
+		m_task_print_info.cancel();
+	} else {
+		m_task_analog_mon.setTimeout(0);
+		m_task_print_info.setTimeout(0);
+	}
 }
 
 void App::printInfoTask(void *) {
@@ -282,14 +317,17 @@ void App::onChargerStatus(void *, Button::Event) {
 }
 
 void App::onPwrKey(void *, Button::Event evt) {
-	if (evt == Button::EVT_PRESS)
+	if (evt == Button::EVT_PRESS) 
 		m_mon.ignoreDcinVoltage(true);
+	
 	if (evt == Button::EVT_RELEASE || evt == Button::EVT_LONGRELEASE)
 		m_mon.ignoreDcinVoltage(false);
+	
 	if (evt == Button::EVT_RELEASE) {
 		m_last_pwron_fail = PWR_FAIL_NONE;
 		setStateBit(USER_POWER_OFF, false);
 	}
+	
 	if (evt == Button::EVT_LONGPRESS)
 		powerOff(true);
 	
@@ -298,11 +336,21 @@ void App::onPwrKey(void *, Button::Event evt) {
 	m_task_analog_mon.setTimeout(0);
 }
 
+bool App::idleHook(void *) {
+	LOGD("No tasks, going to deep sleep...\r\n\r\n\r\n");
+	Loop::suspend(false);
+	allowDeepSleep(false);
+	return true;
+}
+
 int App::run() {
 	initHw();
 	RTC::init();
 	Loop::init();
 	m_mon.init();
+	
+	// Idle hook
+	Loop::setIdleCallback(Loop::IdleCallback::make<&App::idleHook>(*this));
 	
 	// Analog monitor task
 	m_task_analog_mon.init(Task::Callback::make<&App::monitorTask>(*this));

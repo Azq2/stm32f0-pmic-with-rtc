@@ -9,6 +9,7 @@
 #include "Loop.h"
 #include "Pinout.h"
 #include "Config.h"
+#include "Debug.h"
 #include "utils.h"
 
 #define VREFINT_CAL (*((uint16_t *) 0x1FFFF7BA))
@@ -42,6 +43,7 @@ class AnalogMon {
 		int m_dcin = 0;
 		int m_cpu_temp = 0;
 		int m_bat_temp = 0;
+		bool m_dcin_present = false;
 	public:
 		void init();
 		
@@ -60,11 +62,11 @@ class AnalogMon {
 		}
 		
 		inline int isDcinPresent() {
-			return gpio_get(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin) != 0;
+			return m_dcin_present;
 		}
 		
 		inline int isDcinGood() {
-			return m_dcin >= Config::DCIN_MIN_VOLTAGE;
+			return isDcinPresent() && m_dcin >= Config::DCIN_MIN_VOLTAGE;
 		}
 		
 		inline int getVbat() {
@@ -72,7 +74,7 @@ class AnalogMon {
 		}
 		
 		inline int getDcin() {
-			return m_dcin;
+			return isDcinPresent() ? m_dcin : 0;
 		}
 		
 		inline int getCpuTemp() {

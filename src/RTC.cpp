@@ -5,8 +5,25 @@
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/rtc.h>
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/exti.h>
+#include <libopencm3/cm3/nvic.h>
+
+/* 2000-03-01 (mod 400 year, immediately after feb29 */
+#define LEAPOCH (946684800LL + 86400 * (31 + 29))
+
+#define DAYS_PER_400Y (365 * 400 + 97)
+#define DAYS_PER_100Y (365 * 100 + 24)
+#define DAYS_PER_4Y   (365 * 4   + 1)
 
 constexpr uint32_t RTC_INIT_MAGIC = 0x32717a41;
+
+int RTC::decodeBCD(uint32_t v, uint32_t t_shift, uint32_t t_mask, uint32_t u_shift, uint32_t u_mask) {
+	return ((((v >> t_shift) & t_mask) * 10) + ((v >> u_shift) & u_mask));
+}
+
+int RTC::encodeBCD(uint32_t v, uint32_t t_shift, uint32_t t_mask, uint32_t u_shift, uint32_t u_mask) {
+	return (((v / 10) & t_mask) <<  t_shift) | (((v % 10) & u_mask) << u_shift);
+}
 
 void RTC::init() {
 	pwr_disable_backup_domain_write_protect();
@@ -19,40 +36,93 @@ void RTC::init() {
 	rtc_unlock();
 	rtc_set_init_flag();
 	rtc_wait_for_init_ready();
-	rtc_set_prescaler(20000, 1);
+	rtc_set_prescaler(19999, 1);
 	rtc_set_am_format();
 	rtc_clear_init_flag();
+	
+	// RTC alarm exti data line
+	exti_enable_request(EXTI17);
+	exti_set_trigger(EXTI17, EXTI_TRIGGER_RISING);
+	
+	// RTC alarm irq
+	RTC_CR |= RTC_CR_ALRAIE;
+	nvic_enable_irq(NVIC_RTC_IRQ);
+	nvic_set_priority(NVIC_RTC_IRQ, 1);
+	
+	// Disable previous alarm
+	RTC_CR &= ~RTC_CR_ALRAE;
+	
 	rtc_lock();
 	rtc_wait_for_synchro();
+	pwr_enable_backup_domain_write_protect();
 	
 	if (RTC_BKPXR(0) != RTC_INIT_MAGIC) {
 		setDateTime(2021, 12, 19, 2, 36, 5);
+		
+		pwr_disable_backup_domain_write_protect();
 		RTC_BKPXR(0) = RTC_INIT_MAGIC;
+		pwr_enable_backup_domain_write_protect();
 	}
-	
-	pwr_enable_backup_domain_write_protect();
 }
 
-void RTC::setDateTime(uint16_t y, uint8_t m, uint8_t d, uint8_t hh, uint8_t mm, uint8_t ss) {
-	pwr_disable_backup_domain_write_protect();
-	
-	rtc_unlock();
+void RTC::setDateTime(int y, int m, int d, int hh, int mm, int ss) {
+	unlock();
 	rtc_set_init_flag();
 	rtc_wait_for_init_ready();
-	
-	rtc_enable_bypass_shadow_register();
 	
 	rtc_calendar_set_year(y - 2000);
 	rtc_calendar_set_month(m);
 	rtc_calendar_set_day(d);
 	rtc_time_set_time(hh, mm, ss, true);
 	
-	rtc_disable_bypass_shadow_register();
-	
 	rtc_clear_init_flag();
-	rtc_lock();
+	lock();
+}
+
+void RTC::setAlarm(int hh, int mm, int ss, int wday) {
+	unlock();
 	
-	pwr_enable_backup_domain_write_protect();
+	RTC_CR &= ~RTC_CR_ALRAE;
+	while (!(RTC_ISR & RTC_ISR_ALRAWF));
+	
+	uint32_t reg = 0;
+	
+	if (wday >= 0) {
+		reg |= encodeBCD(wday, RTC_ALRMXR_DT_SHIFT, RTC_ALRMXR_DT_MASK, RTC_ALRMXR_DU_SHIFT, RTC_ALRMXR_DU_MASK);
+	} else {
+		reg |= RTC_ALRMXR_MSK4;
+	}
+	
+	if (hh >= 0) {
+		reg |= encodeBCD(hh, RTC_ALRMXR_HT_SHIFT, RTC_ALRMXR_HT_MASK, RTC_ALRMXR_HU_SHIFT, RTC_ALRMXR_HU_MASK);
+	} else {
+		reg |= RTC_ALRMXR_MSK3;
+	}
+	
+	if (mm >= 0) {
+		reg |= encodeBCD(mm, RTC_ALRMXR_MNT_SHIFT, RTC_ALRMXR_MNT_MASK, RTC_ALRMXR_MNU_SHIFT, RTC_ALRMXR_MNU_MASK);
+	} else {
+		reg |= RTC_ALRMXR_MSK2;
+	}
+	
+	if (ss >= 0) {
+		reg |= encodeBCD(ss, RTC_ALRMXR_MNT_SHIFT, RTC_ALRMXR_ST_SHIFT, RTC_ALRMXR_SU_SHIFT, RTC_ALRMXR_SU_MASK);
+	} else {
+		reg |= RTC_ALRMXR_MSK1;
+	}
+	
+	RTC_ALRMAR = reg;
+	
+	RTC_CR |= RTC_CR_ALRAE;
+	
+	lock();
+}
+
+void RTC::clearAlarm() {
+	unlock();
+	RTC_CR &= ~RTC_CR_ALRAE;
+	while (!(RTC_ISR & RTC_ISR_ALRAWF));
+	lock();
 }
 
 // https://blog.reverberate.org/2020/05/12/optimizing-date-algorithms.html
@@ -66,12 +136,92 @@ uint32_t RTC::toUnixTime(int year, int month, int day, int hours, int minutes, i
 	return days * 3600 * 24 + (hours * 3600) + (minutes * 60) + seconds;
 }
 
+// https://git.musl-libc.org/cgit/musl/tree/src/time/__secs_to_tm.c
+bool RTC::fromUnixTime(uint32_t t, tm *result) {
+	long long days, secs, years;
+	int remdays, remsecs, remyears;
+	int qc_cycles, c_cycles, q_cycles;
+	int months;
+	static const char days_in_month[] = {31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29};
+	
+	secs = t - LEAPOCH;
+	days = secs / 86400;
+	remsecs = secs % 86400;
+	if (remsecs < 0) {
+		remsecs += 86400;
+		days--;
+	}
+	
+	qc_cycles = days / DAYS_PER_400Y;
+	remdays = days % DAYS_PER_400Y;
+	if (remdays < 0) {
+		remdays += DAYS_PER_400Y;
+		qc_cycles--;
+	}
+	
+	c_cycles = remdays / DAYS_PER_100Y;
+	if (c_cycles == 4)
+		c_cycles--;
+	remdays -= c_cycles * DAYS_PER_100Y;
+
+	q_cycles = remdays / DAYS_PER_4Y;
+	if (q_cycles == 25)
+		q_cycles--;
+	remdays -= q_cycles * DAYS_PER_4Y;
+	
+	remyears = remdays / 365;
+	if (remyears == 4)
+		remyears--;
+	remdays -= remyears * 365;
+	
+	years = remyears + 4 * q_cycles + 100 * c_cycles + 400LL * qc_cycles;
+	
+	for (months = 0; days_in_month[months] <= remdays; months++)
+		remdays -= days_in_month[months];
+	
+	if (months >= 10) {
+		months -= 12;
+		years++;
+	}
+	
+	result->year = years + 2000;
+	result->month = months + 3;
+	result->day = remdays + 1;
+	result->hours = remsecs / 3600;
+	result->minutes = remsecs / 60 % 60;
+	result->seconds = remsecs % 60;
+	
+	return true;
+}
+
+void RTC::readTime(tm *result) {
+	result->year = 2000 + decodeBCD(RTC_DR, RTC_DR_YT_SHIFT, RTC_DR_YT_MASK, RTC_DR_YU_SHIFT, RTC_DR_YU_MASK);
+	result->month = decodeBCD(RTC_DR, RTC_DR_MT_SHIFT, RTC_DR_MT_MASK, RTC_DR_MU_SHIFT, RTC_DR_MU_MASK);
+	result->day = decodeBCD(RTC_DR, RTC_DR_DT_SHIFT, RTC_DR_DT_MASK, RTC_DR_DU_SHIFT, RTC_DR_DU_MASK);
+	result->hours = decodeBCD(RTC_TR, RTC_TR_HT_SHIFT, RTC_TR_HT_MASK, RTC_TR_HU_SHIFT, RTC_TR_HU_MASK);
+	result->minutes = decodeBCD(RTC_TR, RTC_TR_MNT_SHIFT, RTC_TR_MNT_MASK, RTC_TR_MNU_SHIFT, RTC_TR_MNU_MASK);
+	result->seconds = decodeBCD(RTC_TR, RTC_TR_ST_SHIFT, RTC_TR_ST_MASK, RTC_TR_SU_SHIFT, RTC_TR_SU_MASK);
+}
+
 uint32_t RTC::time() {
-	int year = 2000 + decodeBCD(RTC_DR, RTC_DR_YT_SHIFT, RTC_DR_YT_MASK, RTC_DR_YU_SHIFT, RTC_DR_YU_MASK);
-	int month = decodeBCD(RTC_DR, RTC_DR_MT_SHIFT, RTC_DR_MT_MASK, RTC_DR_MU_SHIFT, RTC_DR_MU_MASK);
-	int day = decodeBCD(RTC_DR, RTC_DR_DT_SHIFT, RTC_DR_DT_MASK, RTC_DR_DU_SHIFT, RTC_DR_DU_MASK);
-	int hours = decodeBCD(RTC_TR, RTC_TR_HT_SHIFT, RTC_TR_HT_MASK, RTC_TR_HU_SHIFT, RTC_TR_HU_MASK);
-	int minutes = decodeBCD(RTC_TR, RTC_TR_MNT_SHIFT, RTC_TR_MNT_MASK, RTC_TR_MNU_SHIFT, RTC_TR_MNU_MASK);
-	int seconds = decodeBCD(RTC_TR, RTC_TR_ST_SHIFT, RTC_TR_ST_MASK, RTC_TR_SU_SHIFT, RTC_TR_SU_MASK);
-	return toUnixTime(year, month, day, hours, minutes, seconds);
+	tm now;
+	readTime(&now);
+	return toUnixTime(now.year, now.month, now.day, now.hours, now.minutes, now.seconds);
+}
+
+void RTC::unlock() {
+	pwr_disable_backup_domain_write_protect();
+	rtc_unlock();
+	rtc_enable_bypass_shadow_register();
+}
+
+void RTC::lock() {
+	rtc_disable_bypass_shadow_register();
+	rtc_lock();
+	pwr_enable_backup_domain_write_protect();
+}
+
+void rtc_isr(void) {
+	RTC_ISR &= ~RTC_ISR_ALRAF;
+	exti_reset_request(EXTI17);
 }

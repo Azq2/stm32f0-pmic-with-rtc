@@ -1,7 +1,9 @@
 #include "Loop.h"
 
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/pwr.h>
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/cm3/scb.h>
 #include <libopencm3/cm3/systick.h>
 #include <algorithm>
 #include <cstdio>
@@ -14,6 +16,9 @@ volatile int64_t Loop::m_ticks = 0;
 
 uint32_t m_max_idle_time = 0;
 uint32_t m_counts_per_tick = 0;
+
+Loop::IdleCallback Loop::m_idle_callback;
+void *Loop::m_idle_callback_data = nullptr;
 
 void Loop::init() {
 	m_counts_per_tick = rcc_ahb_frequency / 8 / 1000;
@@ -31,6 +36,8 @@ void Loop::run() {
 		Task *task = m_first;
 		int64_t m_next_run = ms() + m_max_idle_time;
 		uint32_t changed_before = m_changed;
+		int processed = 0;
+		
 		while (task) {
 			Task *next = task->next();
 			if (task->enabled()) {
@@ -39,11 +46,18 @@ void Loop::run() {
 				
 				if (task->enabled())
 					m_next_run = std::min(m_next_run, task->nextRun());
+				
+				processed++;
 			}
 			task = next;
 		}
 		
 		if (changed_before == m_changed) {
+			if (!processed) {
+				if (m_idle_callback && m_idle_callback(m_idle_callback_data))
+					continue;
+			}
+			
 			int64_t time_for_idle = m_next_run - ms();
 			if (time_for_idle == 1) {
 				__asm__ volatile("wfi");
@@ -52,6 +66,24 @@ void Loop::run() {
 			}
 		}
 	}
+}
+
+void Loop::suspend(bool standby) {
+	pwr_clear_standby_flag();
+	pwr_clear_wakeup_flag();
+	
+	if (standby) {
+		pwr_set_standby_mode();
+	} else {
+		pwr_voltage_regulator_on_in_stop();
+		pwr_set_stop_mode();
+	}
+	
+	SCB_SCR |= SCB_SCR_SLEEPDEEP;
+	
+	__asm__ volatile("wfi");
+	
+	SCB_SCR &= ~SCB_SCR_SLEEPDEEP;
 }
 
 void Loop::idleFor(uint32_t idle_time) {
@@ -76,6 +108,7 @@ void Loop::idleFor(uint32_t idle_time) {
 	__asm__ volatile("wfi");
 	__asm__ volatile("isb");
 	
+	#if 0
 	// Allow process irq fired after sleep
 	__asm__ volatile("cpsie i" ::: "memory");
 	__asm__ volatile("dsb");
@@ -83,6 +116,7 @@ void Loop::idleFor(uint32_t idle_time) {
 	__asm__ volatile("cpsid i" ::: "memory");
 	__asm__ volatile("dsb");
 	__asm__ volatile("isb");
+	#endif
 	
 	// Recalc internal ticks counter
 	bool counted_to_zero = (STK_CSR & STK_CSR_COUNTFLAG) != 0;

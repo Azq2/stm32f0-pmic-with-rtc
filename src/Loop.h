@@ -3,17 +3,30 @@
 #include <cstdint>
 
 #include "Task.h"
+#include <delegate/delegate.hpp>
 
 class Loop {
+	public:
+		typedef delegate<bool(void *)> IdleCallback;
+	
 	protected:
 		static Task *m_first;
 		static Task *m_last;
 		static uint32_t m_changed;
 		static int64_t m_last_log;
 		static volatile int64_t m_ticks;
+		
+		static IdleCallback m_idle_callback;
+		static void *m_idle_callback_data;
 	public:
 		static void init();
 		static void run();
+		static void suspend(bool standby);
+		
+		static inline void setIdleCallback(IdleCallback callback, void *data = nullptr) {
+			m_idle_callback = callback;
+			m_idle_callback_data = data;
+		}
 		
 		static int64_t ms() {
 			return m_ticks;

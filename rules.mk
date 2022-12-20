@@ -32,7 +32,7 @@
 # Second expansion/secondary not set, add this if you need them.
 
 BUILD_DIR ?= bin
-OPT ?= -O2
+OPT ?= -Os
 CSTD ?= -std=c11
 CXXSTD ?= -std=c++17
 

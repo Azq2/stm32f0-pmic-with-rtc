@@ -63,6 +63,7 @@ void AnalogMon::read() {
 	
 	uint32_t result[COUNT_OF(m_adc_result)] = {};
 	
+	bool pwr_key_pressed = false;
 	for (int i = 0; i < ADC_AVG_CNT; i++) {
 		adc_start_conversion_regular(ADC1);
 		while (!dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF));
@@ -73,6 +74,9 @@ void AnalogMon::read() {
 			if (i == ADC_AVG_CNT - 1)
 				result[j] = result[j] / ADC_AVG_CNT;
 		}
+		
+		if (gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin))
+			pwr_key_pressed = true;
 	}
 	
 	dma_disable_channel(DMA1, DMA_CHANNEL1);
@@ -85,8 +89,12 @@ void AnalogMon::read() {
 	m_cpu_temp = toTemperature(result[CPU_TEMP], Config::CPU_TEMP);
 	m_bat_temp = toTemperature(toVoltage(result[BAT_TEMP], vrefint, 1000), Config::BAT_TEMP);
 	
-	if (!m_ignore_dcin && Loop::ms() >= m_last_dcin_ignore)
-		m_dcin = toVoltage(result[DCIN], vrefint, Config::DCIN_RDIV);
+	if (!pwr_key_pressed) {
+		if (!m_ignore_dcin && Loop::ms() >= m_last_dcin_ignore) {
+			m_dcin = toVoltage(result[DCIN], vrefint, Config::DCIN_RDIV);
+			m_dcin_present = gpio_get(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin) != 0;
+		}
+	}
 }
 
 int AnalogMon::toVoltage(int raw_value, int vref, int rdiv) {

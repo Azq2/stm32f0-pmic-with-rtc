@@ -54,6 +54,7 @@ class App {
 		int m_last_chrg_failure_cnt = 0;
 		int m_dcin_bad_cnt = 0;
 		int64_t m_last_charging = 0;
+		int64_t m_dcin_connected = 0;
 		
 		PwrOnFailureReason m_last_pwron_fail = PWR_FAIL_NONE;
 		
@@ -72,15 +73,7 @@ class App {
 			return (m_state & bit) != 0;
 		}
 		
-		inline bool setStateBit(uint32_t bit, bool value) {
-			bool is_changed = (value != is(bit));
-			if (value) {
-				m_state |= bit;
-			} else {
-				m_state &= ~bit;
-			}
-			return is_changed;
-		}
+		bool setStateBit(uint32_t bit, bool value);
 		
 		void checkBatteryTemp(const char *name, int min, int max, Flags flag_lo, Flags flag_hi);
 		ChrgFailureReason checkChargingAllowed();
@@ -98,6 +91,9 @@ class App {
 		void onBatChange(void *, bool state);
 		void onChargerStatus(void *, Button::Event evt);
 		void onPwrKey(void *, Button::Event evt);
+		bool idleHook(void *);
+		
+		void allowDeepSleep(bool flag);
 		
 		bool isPowerOnAllowed();
 		void powerOn();

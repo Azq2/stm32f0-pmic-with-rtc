@@ -1,7 +1,6 @@
 #include "Loop.h"
 #include "Task.h"
-
-#include <cstdio>
+#include "utils.h"
 
 void Task::exec() {
 	if (!m_loop)
@@ -15,6 +14,8 @@ void Task::exec() {
 }
 
 void Task::run(uint32_t ms, bool loop) {
+	ENTER_CRITICAL();
+	
 	if (m_enabled)
 		cancel();
 	
@@ -35,11 +36,17 @@ void Task::run(uint32_t ms, bool loop) {
 	m_enabled = true;
 	
 	Loop::onChange();
+	
+	EXIT_CRITICAL();
 }
 
 void Task::cancel() {
-	if (!m_enabled)
+	ENTER_CRITICAL();
+	
+	if (!m_enabled) {
+		EXIT_CRITICAL();
 		return;
+	}
 	
 	if (this == Loop::first())
 		Loop::first(m_next);
@@ -59,4 +66,6 @@ void Task::cancel() {
 	m_enabled = false;
 	
 	Loop::onChange();
+	
+	EXIT_CRITICAL();
 }

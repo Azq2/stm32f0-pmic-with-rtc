@@ -1,4 +1,5 @@
 #include "Button.h"
+#include "Debug.h"
 #include "utils.h"
 #include <cstdio>
 
