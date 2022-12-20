@@ -46,6 +46,10 @@ void App::initHw() {
 	gpio_mode_setup(Pinout::VCC_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::VCC_EN.pin);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
 	
+	// PWR_LED
+	gpio_mode_setup(Pinout::PWR_LED.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::PWR_LED.pin);
+	gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+	
 	// CHARGER_EN
     gpio_mode_setup(Pinout::CHARGER_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::CHARGER_EN.pin);
     gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
@@ -105,11 +109,15 @@ void App::monitorTask(void *) {
 				m_last_chrg_failure_time = Loop::ms();
 				m_dcin_bad_cnt = 0;
 			}
+		} else {
+			m_dcin_lost = Loop::ms();
 		}
 	}
 	
-	if (setStateBit(DCIN_GOOD, is(DCIN_PRESENT) && m_mon.isDcinGood()))
-		LOGD("DCIN voltage is %s [%d mV]\r\n", is(DCIN_GOOD) ? "OK" : "BAD", m_mon.getDcin());
+	if (setStateBit(DCIN_GOOD, is(DCIN_PRESENT) && m_mon.isDcinGood())) {
+		if (is(DCIN_GOOD) || is(DCIN_PRESENT))
+			LOGD("DCIN voltage is %s [%d mV]\r\n", is(DCIN_GOOD) ? "OK" : "BAD", m_mon.getDcin());
+	}
 	
 	if (setStateBit(BAT_PRESENT, m_mon.isBatPresent()))
 		LOGD("Battery %s!\r\n", is(BAT_PRESENT) ? "connected" : "disconnected");
@@ -158,6 +166,15 @@ void App::monitorTask(void *) {
 		}
 	}
 	
+	if (is(POWER_ON)) {
+		if (is(DCIN_GOOD) || Loop::ms() - m_dcin_lost <= 30000) {
+			gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+		} else {
+			gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+			setPwrLedPulse(1);
+		}
+	}
+	
 	uint32_t next_timeout = 30000;
 	if (is(BAT_CHARGING)) {
 		next_timeout = 200;
@@ -183,14 +200,16 @@ void App::monitorTask(void *) {
 	m_task_analog_mon.setTimeout(next_timeout);
 }
 
-void App::allowDeepSleep(bool flag) {
-	if (flag) {
-		m_task_analog_mon.cancel();
-		m_task_print_info.cancel();
+void App::pwrLedTask(void *) {
+	if (gpio_get(Pinout::PWR_LED.port, Pinout::PWR_LED.pin)) {
+		m_pwr_led_pulse_cnt--;
+		gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
 	} else {
-		m_task_analog_mon.setTimeout(0);
-		m_task_print_info.setTimeout(0);
+		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
 	}
+	
+	if (m_pwr_led_pulse_cnt > 0)
+		m_task_pwr_led.setTimeout(300);
 }
 
 void App::printInfoTask(void *) {
@@ -201,6 +220,22 @@ void App::printInfoTask(void *) {
 		idec(m_mon.getCpuTemp()), iexp(m_mon.getCpuTemp())
 	);
 	m_task_print_info.setTimeout(is(BAT_CHARGING) ? 5000 : 30000);
+}
+
+void App::allowDeepSleep(bool flag) {
+	if (flag) {
+		m_task_analog_mon.cancel();
+		m_task_print_info.cancel();
+	} else {
+		m_task_analog_mon.setTimeout(0);
+		m_task_print_info.setTimeout(0);
+	}
+}
+
+void App::setPwrLedPulse(int cnt) {
+	m_pwr_led_pulse_cnt = cnt;
+	if (m_pwr_led_pulse_cnt > 0)
+		m_task_pwr_led.setTimeout(0);
 }
 
 const char *App::getEnumName(ChrgFailureReason reason) {
@@ -291,10 +326,18 @@ void App::powerOn() {
 		setStateBit(POWER_ON, true);
 		setStateBit(USER_POWER_OFF, false);
 		gpio_set(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
+		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+		m_task_pwr_led.cancel();
 	} else {
 		LOGD("Power-on not allowed, reason=%s\r\n", getEnumName(pwr_fail));
-		m_task_print_info.setTimeout(0);
+		
+		if (pwr_fail == PWR_FAIL_BAT_IS_LOW)
+			setPwrLedPulse(5);
+		
+		if (pwr_fail == PWR_FAIL_BAT_TEMP_IS_LOW || pwr_fail == PWR_FAIL_BAT_TEMP_IS_HIGH)
+			setPwrLedPulse(10);
 	}
+	m_task_print_info.setTimeout(0);
 }
 
 void App::powerOff(bool user) {
@@ -302,6 +345,8 @@ void App::powerOff(bool user) {
 	setStateBit(POWER_ON, false);
 	setStateBit(USER_POWER_OFF, user);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
+	gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+	m_task_print_info.setTimeout(0);
 }
 
 void App::onDcinChange(void *, bool) {
@@ -349,6 +394,8 @@ int App::run() {
 	Loop::init();
 	m_mon.init();
 	
+	m_dcin_lost = Loop::ms();
+	
 	// Idle hook
 	Loop::setIdleCallback(Loop::IdleCallback::make<&App::idleHook>(*this));
 	
@@ -359,6 +406,9 @@ int App::run() {
 	// Print info task
 	m_task_print_info.init(Task::Callback::make<&App::printInfoTask>(*this));
 	m_task_print_info.setTimeout(100);
+	
+	// PWR_LED task
+	m_task_pwr_led.init(Task::Callback::make<&App::pwrLedTask>(*this));
 	
 	// Power key
 	m_pwr_key.update(gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin) != 0);
