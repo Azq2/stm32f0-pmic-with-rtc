@@ -14,6 +14,7 @@ CXXFILES += src/Button.cpp
 CXXFILES += src/Loop.cpp
 CXXFILES += src/Task.cpp
 CXXFILES += src/RTC.cpp
+CXXFILES += src/I2CSlave.cpp
 CXXFILES += src/main.cpp
 CXXFILES += src/utils.cpp
 

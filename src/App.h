@@ -7,6 +7,7 @@
 #include "Pinout.h"
 #include "Task.h"
 #include "Button.h"
+#include "I2CSlave.h"
 #include "AnalogMon.h"
 #include "utils.h"
 
@@ -33,6 +34,22 @@ class App {
 			PWR_KEY_PRESSED			= 1 << 11
 		};
 		
+		enum Regs {
+			// Read
+			I2C_REG_IRQ_STATUS,
+			I2C_REG_BAT_VOLTAGE,
+			I2C_REG_BAT_TEMP,
+			I2C_REG_BAT_MIN_TEMP,
+			I2C_REG_BAT_MAX_TEMP,
+			I2C_REG_BAT_PCT,
+			I2C_REG_DCIN_VOLTAGE,
+			I2C_REG_CPU_TEMP,
+			I2C_REG_GET_MAX_BAT_VOLTAGE,
+			I2C_REG_GET_MIN_BAT_VOLTAGE,
+			I2C_REG_POWER_OFF,
+			I2C_REG_RTC_TIME,
+		};
+		
 		enum ChrgFailureReason {
 			CHRG_FAIL_NONE,
 			CHRG_FAIL_LOW_TEMP,
@@ -55,7 +72,7 @@ class App {
 		int m_dcin_bad_cnt = 0;
 		int64_t m_last_charging = 0;
 		int64_t m_dcin_connected = 0;
-		int64_t m_dcin_lost = 0;
+		int64_t m_last_pwron = 0;
 		
 		PwrOnFailureReason m_last_pwron_fail = PWR_FAIL_NONE;
 		
@@ -99,6 +116,11 @@ class App {
 		void onBatChange(void *, bool state);
 		void onChargerStatus(void *, Button::Event evt);
 		void onPwrKey(void *, Button::Event evt);
+		
+		void onI2C(void *, I2CSlave::Event ev, uint8_t *byte);
+		uint32_t readReg(void *, uint8_t reg);
+		void writeReg(void *, uint8_t reg, uint32_t value);
+		
 		bool idleHook(void *);
 		
 		void allowDeepSleep(bool flag);

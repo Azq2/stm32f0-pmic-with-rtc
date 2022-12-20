@@ -12,15 +12,10 @@
 #include "Debug.h"
 #include "utils.h"
 
-#include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/gpio.h>
-#include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/usart.h>
-#include <libopencm3/stm32/adc.h>
-#include <libopencm3/stm32/dma.h>
-#include <libopencm3/stm32/rtc.h>
-#include <libopencm3/stm32/pwr.h>
+#include <libopencm3/stm32/rcc.h>
 
 bool App::setStateBit(uint32_t bit, bool value) {
 	bool is_changed = (value != is(bit));
@@ -41,6 +36,7 @@ void App::initHw() {
 	rcc_periph_clock_enable(RCC_GPIOF);
 	rcc_periph_clock_enable(RCC_RTC);
 	rcc_periph_clock_enable(RCC_PWR);
+	rcc_periph_clock_enable(RCC_I2C1);
 	
 	// VCC_EN
 	gpio_mode_setup(Pinout::VCC_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::VCC_EN.pin);
@@ -59,6 +55,14 @@ void App::initHw() {
 	
 	// CHARGER_STATUS
 	gpio_mode_setup(Pinout::CHARGER_STATUS.port, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, Pinout::CHARGER_STATUS.pin);
+	
+	// I2C
+	gpio_set_output_options(Pinout::I2C_SCL.port, GPIO_OTYPE_OD, GPIO_OSPEED_LOW, Pinout::I2C_SCL.pin);
+	gpio_set_output_options(Pinout::I2C_SDA.port, GPIO_OTYPE_OD, GPIO_OSPEED_LOW, Pinout::I2C_SDA.pin);
+	gpio_mode_setup(Pinout::I2C_SCL.port, GPIO_MODE_AF, GPIO_PUPD_NONE, Pinout::I2C_SCL.pin);
+	gpio_mode_setup(Pinout::I2C_SDA.port, GPIO_MODE_AF, GPIO_PUPD_NONE, Pinout::I2C_SDA.pin);
+	gpio_set_af(Pinout::I2C_SCL.port, GPIO_AF4, Pinout::I2C_SCL.pin);
+	gpio_set_af(Pinout::I2C_SDA.port, GPIO_AF4, Pinout::I2C_SDA.pin);
 	
 	#if DEBUG
 	// USART for debug
@@ -109,8 +113,6 @@ void App::monitorTask(void *) {
 				m_last_chrg_failure_time = Loop::ms();
 				m_dcin_bad_cnt = 0;
 			}
-		} else {
-			m_dcin_lost = Loop::ms();
 		}
 	}
 	
@@ -167,7 +169,7 @@ void App::monitorTask(void *) {
 	}
 	
 	if (is(POWER_ON)) {
-		if (is(DCIN_GOOD) || Loop::ms() - m_dcin_lost <= 30000) {
+		if (is(DCIN_GOOD) || Loop::ms() - m_last_pwron <= 30000) {
 			gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
 		} else {
 			gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
@@ -194,8 +196,6 @@ void App::monitorTask(void *) {
 			return;
 		}
 	}
-	
-	LOGD("next_timeout=%ld\r\n", next_timeout);
 	
 	m_task_analog_mon.setTimeout(next_timeout);
 }
@@ -322,7 +322,8 @@ App::PwrOnFailureReason App::checkPowerOnAllowed() {
 void App::powerOn() {
 	auto pwr_fail = checkPowerOnAllowed();
 	if (pwr_fail == PWR_FAIL_NONE) {
-		LOGD("System power in ON\r\n");
+		LOGD("System power is ON\r\n");
+		m_last_pwron = Loop::ms();
 		setStateBit(POWER_ON, true);
 		setStateBit(USER_POWER_OFF, false);
 		gpio_set(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
@@ -341,7 +342,7 @@ void App::powerOn() {
 }
 
 void App::powerOff(bool user) {
-	LOGD("System power in OFF\r\n");
+	LOGD("System power is OFF\r\n");
 	setStateBit(POWER_ON, false);
 	setStateBit(USER_POWER_OFF, user);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
@@ -388,13 +389,44 @@ bool App::idleHook(void *) {
 	return true;
 }
 
+uint32_t App::readReg(void *, uint8_t reg) {
+	switch (reg) {
+		case I2C_REG_IRQ_STATUS:			return m_state;
+		case I2C_REG_BAT_VOLTAGE:			return m_mon.getVbat();
+		case I2C_REG_BAT_TEMP:				return m_mon.getBatTemp();
+		case I2C_REG_BAT_MIN_TEMP:			return Config::BAT.t_min;
+		case I2C_REG_BAT_MAX_TEMP:			return Config::BAT.t_max;
+		case I2C_REG_BAT_PCT:				return m_mon.getBatPct();
+		case I2C_REG_DCIN_VOLTAGE:			return m_mon.getDcin();
+		case I2C_REG_CPU_TEMP:				return m_mon.getCpuTemp();
+		case I2C_REG_GET_MIN_BAT_VOLTAGE:	return Config::BAT.v_min;
+		case I2C_REG_GET_MAX_BAT_VOLTAGE:	return Config::BAT.v_max;
+		case I2C_REG_RTC_TIME:				return RTC::time();
+	}
+	return 0xFFFFFFFF;
+}
+
+void App::writeReg(void *, uint8_t reg, uint32_t value) {
+	switch (reg) {
+		case I2C_REG_POWER_OFF:
+			if (value)
+				powerOff(true);
+		break;
+	}
+}
+
 int App::run() {
 	initHw();
 	RTC::init();
 	Loop::init();
 	m_mon.init();
 	
-	m_dcin_lost = Loop::ms();
+	// I2C
+	I2CSlave::init();
+	I2CSlave::setCallback(
+		I2CSlave::ReadCallback::make<&App::readReg>(*this),
+		I2CSlave::WriteCallback::make<&App::writeReg>(*this)
+	);
 	
 	// Idle hook
 	Loop::setIdleCallback(Loop::IdleCallback::make<&App::idleHook>(*this));
