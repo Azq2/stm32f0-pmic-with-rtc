@@ -5,6 +5,16 @@
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/rcc.h>
 
+static AnalogMon *m_instance = nullptr;
+
+AnalogMon::AnalogMon() {
+	m_instance = this;
+}
+
+AnalogMon::~AnalogMon() {
+	m_instance = nullptr;
+}
+
 void AnalogMon::init() {
 	gpio_mode_setup(Pinout::BAT_TEMP.port, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, Pinout::BAT_TEMP.pin);
 	switchFormAdcToExti(true);
@@ -39,6 +49,7 @@ void AnalogMon::init() {
 	dma_set_number_of_data(DMA1, DMA_CHANNEL1, COUNT_OF(m_adc_result));
 	dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
 	dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+	nvic_enable_irq(NVIC_DMA1_CHANNEL1_IRQ);
 }
 
 void AnalogMon::switchFormAdcToExti(bool to_exti) {
@@ -65,9 +76,11 @@ void AnalogMon::read() {
 	
 	bool pwr_key_pressed = false;
 	for (int i = 0; i < ADC_AVG_CNT; i++) {
+		m_dma_work_done = false;
 		adc_start_conversion_regular(ADC1);
-		while (!dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF));
-		dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
+		while (!m_dma_work_done) {
+			__asm__ volatile("wfi");
+		}
 		
 		for (size_t j = 0; j < COUNT_OF(m_adc_result); j++) {
 			result[j] += m_adc_result[j];
@@ -107,4 +120,14 @@ int AnalogMon::toTemperature(int raw_value, const Config::Temp &calibration) {
 
 int AnalogMon::getBatPct() {
 	return std::min(100 * 1000, std::max(0, ((getVbat() - Config::BAT.v_min) * 100 * 1000) / (Config::BAT.v_max - Config::BAT.v_min)));
+}
+
+void AnalogMon::dmaIrqHandler() {
+	dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
+	m_dma_work_done = true;
+}
+
+void dma1_channel1_isr() {
+	if (m_instance)
+		m_instance->dmaIrqHandler();
 }

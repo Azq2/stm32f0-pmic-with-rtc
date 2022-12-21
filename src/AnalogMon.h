@@ -39,12 +39,17 @@ class AnalogMon {
 		bool m_ignore_dcin = false;
 		int64_t m_last_dcin_ignore = 0;
 		
+		bool m_dma_work_done = false;
+		
 		int m_vbat = 0;
 		int m_dcin = 0;
 		int m_cpu_temp = 0;
 		int m_bat_temp = 0;
 		bool m_dcin_present = false;
 	public:
+		AnalogMon();
+		~AnalogMon();
+		
 		void init();
 		
 		void read();
@@ -91,4 +96,6 @@ class AnalogMon {
 		inline int getBatTemp() {
 			return m_bat_temp;
 		}
+		
+		void dmaIrqHandler();
 };
