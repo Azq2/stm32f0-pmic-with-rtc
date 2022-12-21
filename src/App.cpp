@@ -16,6 +16,7 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/rtc.h>
 
 bool App::setStateBit(uint32_t bit, bool value) {
 	bool is_changed = (value != is(bit));
@@ -42,17 +43,25 @@ void App::initHw() {
 	rcc_periph_clock_enable(RCC_PWR);
 	rcc_periph_clock_enable(RCC_I2C1);
 	
+	// Set clock to 4 MHz (low power)
+	/*
+	rcc_set_ppre(RCC_CFGR_PPRE_DIV4);
+	rcc_set_hpre(RCC_CFGR_PPRE_NODIV);
+	rcc_apb1_frequency = 8000000 / 2;
+	rcc_ahb_frequency = 8000000 / 2;
+	*/
+	
 	// VCC_EN
 	gpio_mode_setup(Pinout::VCC_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::VCC_EN.pin);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
 	
-	// PWR_LED
-	gpio_mode_setup(Pinout::PWR_LED.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::PWR_LED.pin);
-	gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+	// BAT_TEMP_EN
+	gpio_mode_setup(Pinout::BAT_TEMP_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::BAT_TEMP_EN.pin);
+	gpio_clear(Pinout::BAT_TEMP_EN.port, Pinout::BAT_TEMP_EN.pin);
 	
 	// CHARGER_EN
-    gpio_mode_setup(Pinout::CHARGER_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::CHARGER_EN.pin);
-    gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
+	gpio_mode_setup(Pinout::CHARGER_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::CHARGER_EN.pin);
+	gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
 	
 	// I2C_IRQ
     gpio_mode_setup(Pinout::I2C_IRQ.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::I2C_IRQ.pin);
@@ -139,7 +148,6 @@ void App::monitorTask(void *) {
 	if (!is(BAT_CHARGE_EN) && chrg_fail == CHRG_FAIL_NONE && !isChargingDisabled()) {
 		LOGD("Charging allowed\r\n");
 		m_last_charging = Loop::ms();
-		gpio_set(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
 		setStateBit(BAT_CHARGE_EN, true);
 	}
 	
@@ -157,8 +165,13 @@ void App::monitorTask(void *) {
 			m_dcin_bad_cnt = 0;
 		}
 		
-		gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
 		setStateBit(BAT_CHARGE_EN, false);
+	}
+	
+	if (is(BAT_CHARGE_EN)) {
+		gpio_set(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
+	} else {
+		gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
 	}
 	
 	if (setStateBit(BAT_CHARGING, m_charger_status.isPressed() && is(BAT_CHARGE_EN)))
@@ -176,17 +189,16 @@ void App::monitorTask(void *) {
 		}
 	}
 	
-	/*
-	if (is(POWER_ON)) {
-		if (is(DCIN_GOOD) || Loop::ms() - m_last_pwron <= 30000) {
-			gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-		} else {
-			gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-			setPwrLedPulse(1);
-		}
-		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
+	uint32_t info_print_freq = is(BAT_CHARGING) ? 5000 : 30000;
+	if (!m_last_info_print || Loop::ms() - m_last_info_print >= info_print_freq) {
+		LOGD(
+			"BAT: %d mV / %d.%d%% / %d.%d °C | DCIN: %d mV | CPU: %d.%d °C\r\n",
+			m_mon.getVbat(), idec(m_mon.getBatPct()), iexp(m_mon.getBatPct()), idec(m_mon.getBatTemp()), iexp(m_mon.getBatTemp()),
+			m_mon.getDcin(),
+			idec(m_mon.getCpuTemp()), iexp(m_mon.getCpuTemp())
+		);
+		m_last_info_print = Loop::ms();
 	}
-	*/
 	
 	uint32_t next_timeout = 30000;
 	if (is(BAT_CHARGING)) {
@@ -211,42 +223,12 @@ void App::monitorTask(void *) {
 	m_task_analog_mon.setTimeout(next_timeout);
 }
 
-void App::pwrLedTask(void *) {
-	if (gpio_get(Pinout::PWR_LED.port, Pinout::PWR_LED.pin)) {
-		m_pwr_led_pulse_cnt--;
-		gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-	} else {
-		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-	}
-	
-	if (m_pwr_led_pulse_cnt > 0)
-		m_task_pwr_led.setTimeout(300);
-}
-
-void App::printInfoTask(void *) {
-	LOGD(
-		"BAT: %d mV / %d.%d%% / %d.%d °C | DCIN: %d mV | CPU: %d.%d °C\r\n",
-		m_mon.getVbat(), idec(m_mon.getBatPct()), iexp(m_mon.getBatPct()), idec(m_mon.getBatTemp()), iexp(m_mon.getBatTemp()),
-		m_mon.getDcin(),
-		idec(m_mon.getCpuTemp()), iexp(m_mon.getCpuTemp())
-	);
-	m_task_print_info.setTimeout(is(BAT_CHARGING) ? 5000 : 30000);
-}
-
 void App::allowDeepSleep(bool flag) {
 	if (flag) {
 		m_task_analog_mon.cancel();
-		m_task_print_info.cancel();
 	} else {
 		m_task_analog_mon.setTimeout(0);
-		m_task_print_info.setTimeout(0);
 	}
-}
-
-void App::setPwrLedPulse(int cnt) {
-	m_pwr_led_pulse_cnt = cnt;
-	if (m_pwr_led_pulse_cnt > 0)
-		m_task_pwr_led.setTimeout(0);
 }
 
 const char *App::getEnumName(ChrgFailureReason reason) {
@@ -338,18 +320,10 @@ void App::powerOn() {
 		setStateBit(POWER_ON, true);
 		setStateBit(USER_POWER_OFF, false);
 		gpio_set(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
-		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-		m_task_pwr_led.cancel();
 	} else {
 		LOGD("Power-on not allowed, reason=%s\r\n", getEnumName(pwr_fail));
-		
-		if (pwr_fail == PWR_FAIL_BAT_IS_LOW)
-			setPwrLedPulse(5);
-		
-		if (pwr_fail == PWR_FAIL_BAT_TEMP_IS_LOW || pwr_fail == PWR_FAIL_BAT_TEMP_IS_HIGH)
-			setPwrLedPulse(10);
 	}
-	m_task_print_info.setTimeout(0);
+	m_task_analog_mon.setTimeout(0);
 }
 
 void App::powerOff(bool user) {
@@ -357,8 +331,7 @@ void App::powerOff(bool user) {
 	setStateBit(POWER_ON, false);
 	setStateBit(USER_POWER_OFF, user);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
-	gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
-	m_task_print_info.setTimeout(0);
+	m_task_analog_mon.setTimeout(0);
 }
 
 void App::onDcinChange(void *, bool) {
@@ -395,8 +368,8 @@ void App::onPwrKey(void *, Button::Event evt) {
 
 bool App::idleHook(void *) {
 	LOGD("No tasks, going to deep sleep...\r\n\r\n\r\n");
-	Loop::suspend(false);
-	allowDeepSleep(true);
+	Loop::suspend(true);
+	allowDeepSleep(false);
 	return true;
 }
 
@@ -411,7 +384,7 @@ uint32_t App::readReg(void *, uint8_t reg) {
 		case I2C_REG_BAT_TEMP:				return m_mon.getBatTemp();
 		case I2C_REG_BAT_MIN_TEMP:			return Config::BAT.t_min;
 		case I2C_REG_BAT_MAX_TEMP:			return Config::BAT.t_max;
-		case I2C_REG_BAT_PCT:				return m_mon.getBatPct();
+		case I2C_REG_BAT_PCT:				return (m_state & BAT_CHARGING) ? std::min(99 * 1000, m_mon.getBatPct()) : m_mon.getBatPct();
 		case I2C_REG_DCIN_VOLTAGE:			return m_mon.getDcin();
 		case I2C_REG_CPU_TEMP:				return m_mon.getCpuTemp();
 		case I2C_REG_GET_MIN_BAT_VOLTAGE:	return Config::BAT.v_min;
@@ -424,8 +397,19 @@ uint32_t App::readReg(void *, uint8_t reg) {
 void App::writeReg(void *, uint8_t reg, uint32_t value) {
 	switch (reg) {
 		case I2C_REG_POWER_OFF:
-			if (value)
+			// Poweron
+			if (value == 0)
+				powerOn();
+			
+			// Shutdown
+			if (value == 1)
 				powerOff(true);
+			
+			// Reboot
+			if (value == 2) {
+				powerOff(false);
+				m_task_analog_mon.setTimeout(2000);
+			}
 		break;
 		
 		case I2C_REG_RTC_TIME:
@@ -442,6 +426,31 @@ int App::run() {
 	Loop::init();
 	m_mon.init();
 	
+	#if DEBUG_CALIBRATE_RTC
+	gpio_mode_setup(Pinout::USART_TX.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::USART_TX.pin);
+	uint32_t last = RTC_TR, now;
+	while (true) {
+		while ((now = RTC_TR) == last);
+		last = now;
+		gpio_toggle(Pinout::USART_TX.port, Pinout::USART_TX.pin);
+	}
+	#endif
+	
+	#if DEBUG_CALIBRATE_BAT_TEMP
+	uint32_t last_time = 0;
+	while (true) {
+		if (!last_time || Loop::ms() - last_time > 1000) {
+			m_mon.read();
+			LOGD(
+				"BAT TEMP: %d mV / %d.%d °C\r\n",
+				m_mon.getBatTempRaw(), idec(m_mon.getBatTemp()), iexp(m_mon.getBatTemp())
+			);
+			last_time = Loop::ms();
+		}
+		__asm__ volatile("wfi");
+	}
+	#endif
+	
 	// I2C
 	I2CSlave::init();
 	I2CSlave::setCallback(
@@ -456,13 +465,6 @@ int App::run() {
 	m_task_analog_mon.init(Task::Callback::make<&App::monitorTask>(*this));
 	m_task_analog_mon.setTimeout(0);
 	
-	// Print info task
-	m_task_print_info.init(Task::Callback::make<&App::printInfoTask>(*this));
-	m_task_print_info.setTimeout(100);
-	
-	// PWR_LED task
-	m_task_pwr_led.init(Task::Callback::make<&App::pwrLedTask>(*this));
-	
 	// Power key
 	m_pwr_key.update(gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin) != 0);
 	m_pwr_key.init(Button::Callback::make<&App::onPwrKey>(*this));
@@ -472,7 +474,7 @@ int App::run() {
 	m_charger_status.update(gpio_get(Pinout::CHARGER_STATUS.port, Pinout::CHARGER_STATUS.pin) == 0);
 	m_charger_status.init(Button::Callback::make<&App::onChargerStatus>(*this));
 	m_charger_status.setTimings(1000, 5000);
-	Exti::set(Pinout::CHARGER_STATUS.port, Pinout::CHARGER_STATUS.pin, Exti::BOTH, Exti::Callback::make<&Button::handleExti>(m_charger_status));
+	Exti::set(Pinout::CHARGER_STATUS.port, Pinout::CHARGER_STATUS.pin, Exti::BOTH, Exti::Callback::make<&Button::handleExtiInverted>(m_charger_status));
 	
 	// Monitoring presence of DCIN/VBAT
 	Exti::set(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin, Exti::BOTH, Exti::Callback::make<&App::onDcinChange>(*this));

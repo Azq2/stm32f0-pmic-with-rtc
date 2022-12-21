@@ -17,6 +17,7 @@ AnalogMon::~AnalogMon() {
 
 void AnalogMon::init() {
 	gpio_mode_setup(Pinout::BAT_TEMP.port, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, Pinout::BAT_TEMP.pin);
+	
 	switchFormAdcToExti(true);
 	
 	rcc_periph_clock_enable(RCC_ADC);
@@ -54,11 +55,13 @@ void AnalogMon::init() {
 
 void AnalogMon::switchFormAdcToExti(bool to_exti) {
 	if (to_exti) {
+		gpio_clear(Pinout::BAT_TEMP_EN.port, Pinout::BAT_TEMP_EN.pin);
 		gpio_mode_setup(Pinout::DCIN_ADC.port, GPIO_MODE_INPUT, GPIO_PUPD_NONE, Pinout::DCIN_ADC.pin);
 		gpio_mode_setup(Pinout::VBAT_ADC.port, GPIO_MODE_INPUT, GPIO_PUPD_NONE, Pinout::VBAT_ADC.pin);
 		Exti::enable(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin);
 		Exti::enable(Pinout::VBAT_ADC.port, Pinout::VBAT_ADC.pin);
 	} else {
+		gpio_set(Pinout::BAT_TEMP_EN.port, Pinout::BAT_TEMP_EN.pin);
 		Exti::disable(Pinout::DCIN_ADC.port, Pinout::DCIN_ADC.pin);
 		Exti::disable(Pinout::VBAT_ADC.port, Pinout::VBAT_ADC.pin);
 		gpio_mode_setup(Pinout::DCIN_ADC.port, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, Pinout::DCIN_ADC.pin);
@@ -100,7 +103,8 @@ void AnalogMon::read() {
 	int vrefint = 3300 * VREFINT_CAL / result[VREF];
 	m_vbat = toVoltage(result[VBAT], vrefint, Config::VBAT_RDIV);
 	m_cpu_temp = toTemperature(result[CPU_TEMP], Config::CPU_TEMP);
-	m_bat_temp = toTemperature(toVoltage(result[BAT_TEMP], vrefint, 1000), Config::BAT_TEMP);
+	m_bat_temp_raw = toVoltage(result[BAT_TEMP], vrefint, 1000);
+	m_bat_temp = toTemperature(m_bat_temp_raw, Config::BAT_TEMP);
 	
 	if (!pwr_key_pressed) {
 		if (!m_ignore_dcin && Loop::ms() >= m_last_dcin_ignore) {

@@ -74,20 +74,16 @@ class App {
 		int64_t m_last_charging = 0;
 		int64_t m_dcin_connected = 0;
 		int64_t m_last_pwron = 0;
+		int64_t m_last_info_print = 0;
 		
 		PwrOnFailureReason m_last_pwron_fail = PWR_FAIL_NONE;
 		
 		Task m_task_analog_mon;
-		Task m_task_print_info;
-		Task m_task_pwr_led;
 		
 		uint32_t m_state = 0;
 		Button m_pwr_key = {};
 		Button m_charger_status = {};
 		AnalogMon m_mon;
-		
-		// PWR_LED
-		int m_pwr_led_pulse_cnt = 0;
 		
 		void initHw();
 		void check();
@@ -106,13 +102,9 @@ class App {
 		uint32_t getTimeoutForChrgFail();
 		const char *getEnumName(ChrgFailureReason reason);
 		const char *getEnumName(PwrOnFailureReason reason);
-		
-		void setPwrLedPulse(int cnt);
 	public:
 		int run();
 		void monitorTask(void *);
-		void printInfoTask(void *);
-		void pwrLedTask(void *);
 		void onDcinChange(void *, bool state);
 		void onBatChange(void *, bool state);
 		void onChargerStatus(void *, Button::Event evt);

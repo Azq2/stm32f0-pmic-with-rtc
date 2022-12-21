@@ -33,6 +33,7 @@ class Button {
 		void init(Callback callback, void *user_data = nullptr);
 		void update(bool state);
 		void handleExti(void *, bool state);
+		void handleExtiInverted(void *, bool state);
 		
 		inline void setTimings(uint32_t debounce, uint32_t longpress_time) {
 			m_debounce = debounce;

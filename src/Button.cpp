@@ -32,6 +32,10 @@ void Button::handleExti(void *, bool state) {
 	update(state);
 }
 
+void Button::handleExtiInverted(void *, bool state) {
+	update(!state);
+}
+
 void Button::update(bool new_state) {
 	if (isPressed() && !new_state)
 		m_release_timer.setTimeout(m_debounce);

@@ -24,6 +24,8 @@ void Loop::init() {
 	m_counts_per_tick = rcc_ahb_frequency / 8 / 1000;
 	m_max_idle_time = 0xFFFFFF / m_counts_per_tick;
 	
+	// printf("m_max_idle_time=%ld / m_counts_per_tick=%ld\r\n", m_max_idle_time, m_counts_per_tick);
+	
 	systick_set_clocksource(STK_CSR_CLKSOURCE_EXT);
 	STK_CVR = 0;
 	systick_set_reload(m_counts_per_tick);
@@ -71,8 +73,10 @@ void Loop::run() {
 void Loop::suspend(bool standby) {
 	pwr_clear_standby_flag();
 	pwr_clear_wakeup_flag();
+	pwr_enable_wakeup_pin();
 	
 	if (standby) {
+		pwr_disable_power_voltage_detect();
 		pwr_set_standby_mode();
 	} else {
 		pwr_voltage_regulator_on_in_stop();

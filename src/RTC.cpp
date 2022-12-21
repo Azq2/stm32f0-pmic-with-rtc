@@ -1,5 +1,6 @@
 #include "RTC.h"
 
+#include "Config.h"
 #include "Debug.h"
 
 #include <libopencm3/stm32/pwr.h>
@@ -36,7 +37,7 @@ void RTC::init() {
 	rtc_unlock();
 	rtc_set_init_flag();
 	rtc_wait_for_init_ready();
-	rtc_set_prescaler(19999, 1);
+	rtc_set_prescaler(Config::RTC_PRESCALER_S, Config::RTC_PRESCALER_A);
 	rtc_set_am_format();
 	rtc_clear_init_flag();
 	

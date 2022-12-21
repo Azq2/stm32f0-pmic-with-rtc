@@ -45,6 +45,7 @@ class AnalogMon {
 		int m_dcin = 0;
 		int m_cpu_temp = 0;
 		int m_bat_temp = 0;
+		int m_bat_temp_raw = 0;
 		bool m_dcin_present = false;
 	public:
 		AnalogMon();
@@ -95,6 +96,10 @@ class AnalogMon {
 		
 		inline int getBatTemp() {
 			return m_bat_temp;
+		}
+		
+		inline int getBatTempRaw() {
+			return m_bat_temp_raw;
 		}
 		
 		void dmaIrqHandler();
