@@ -24,6 +24,10 @@ bool App::setStateBit(uint32_t bit, bool value) {
 	} else {
 		m_state &= ~bit;
 	}
+	
+	if (is_changed)
+		gpio_set(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+	
 	return is_changed;
 }
 
@@ -49,6 +53,10 @@ void App::initHw() {
 	// CHARGER_EN
     gpio_mode_setup(Pinout::CHARGER_EN.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::CHARGER_EN.pin);
     gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
+	
+	// I2C_IRQ
+    gpio_mode_setup(Pinout::I2C_IRQ.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::I2C_IRQ.pin);
+    gpio_clear(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
 	
 	// PWR_KEY
 	gpio_mode_setup(Pinout::PWR_KEY.port, GPIO_MODE_INPUT, GPIO_PUPD_NONE, Pinout::PWR_KEY.pin);
@@ -393,6 +401,9 @@ bool App::idleHook(void *) {
 }
 
 uint32_t App::readReg(void *, uint8_t reg) {
+	if (reg == I2C_REG_IRQ_STATUS)
+		gpio_clear(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+	
 	switch (reg) {
 		case I2C_REG_STATUS:				return m_state;
 		case I2C_REG_IRQ_STATUS:			return m_state;
