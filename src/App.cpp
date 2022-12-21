@@ -391,6 +391,7 @@ bool App::idleHook(void *) {
 
 uint32_t App::readReg(void *, uint8_t reg) {
 	switch (reg) {
+		case I2C_REG_STATUS:				return m_state;
 		case I2C_REG_IRQ_STATUS:			return m_state;
 		case I2C_REG_BAT_VOLTAGE:			return m_mon.getVbat();
 		case I2C_REG_BAT_TEMP:				return m_mon.getBatTemp();

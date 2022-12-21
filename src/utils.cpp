@@ -14,6 +14,20 @@
 static uint32_t critical_nesting = 0;
 static uint32_t uart_for_prinf = 0;
 
+int idec(int v, int n) {
+	int div = 0;
+	for (int i = 0; i < n; i++)
+		div = (div ? div * 10 : 10);
+	return div ? v / div : 0;
+}
+
+int iexp(int v, int n) {
+	int div = 0;
+	for (int i = 0; i < n; i++)
+		div = (div ? div * 10 : 10);
+	return (v - (idec(v, n) * div)) * 10 / div * (v < 0 ? -1 : 1);
+}
+
 void uart_simple_setup(uint32_t usart, uint32_t baudrate, bool use_for_printf) {
 	usart_set_baudrate(usart, baudrate);
 	usart_set_databits(usart, 8);

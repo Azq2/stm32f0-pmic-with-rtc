@@ -36,6 +36,7 @@ class App {
 		
 		enum Regs {
 			// Read
+			I2C_REG_STATUS,
 			I2C_REG_IRQ_STATUS,
 			I2C_REG_BAT_VOLTAGE,
 			I2C_REG_BAT_TEMP,
