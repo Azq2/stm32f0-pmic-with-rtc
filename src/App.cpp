@@ -413,6 +413,12 @@ void App::writeReg(void *, uint8_t reg, uint32_t value) {
 			if (value)
 				powerOff(true);
 		break;
+		
+		case I2C_REG_RTC_TIME:
+			RTC::tm new_tm;
+			RTC::fromUnixTime(value, &new_tm);
+			RTC::setDateTime(new_tm.year, new_tm.month, new_tm.day, new_tm.hours, new_tm.minutes, new_tm.seconds);
+		break;
 	}
 }
 

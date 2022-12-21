@@ -4,6 +4,7 @@
 #include <linux/i2c.h>
 #include <linux/of.h>
 #include <linux/power_supply.h>
+#include <linux/rtc.h>
 
 #define PMIC_DCIN_GOOD				(1 << 0)
 #define PMIC_DCIN_PRESENT			(1 << 1)
@@ -35,20 +36,58 @@
 struct stm32f0_pmic {
 	struct device *dev;
 	struct i2c_client *client;
+	struct rtc_device *rtc;
 	struct mutex xfer_lock;
 	
 	struct power_supply *psy_dcin;
 	struct power_supply *psy_bat;
 };
 
-static uint32_t stm32f0_pmic_read(struct stm32f0_pmic *pmic, u8 reg) {
-	u32 data;
-	s32 ret;
+static u32 stm32f0_pmic_read(struct stm32f0_pmic *pmic, u8 reg, s32 *ret) {
+	u32 data = 0;
+	s32 readed;
+	
 	mutex_lock(&pmic->xfer_lock);
-	ret = i2c_smbus_read_i2c_block_data(pmic->client, reg, 4, (u8 *) &data);
+	readed = i2c_smbus_read_i2c_block_data(pmic->client, reg, 4, (u8 *) &data);
+	*ret = (readed == 4 ? 0 : -EIO);
 	mutex_unlock(&pmic->xfer_lock);
-	// printk("stm32f0_pmic_read(%02X) = %08X\n", reg, le32_to_cpu(data));
-	return ret != 4 ? 0 : le32_to_cpu(data);
+	
+	return le32_to_cpu(data);
+}
+
+static s32 stm32f0_pmic_write(struct stm32f0_pmic *pmic, u8 reg, u32 data) {
+	s32 ret;
+	
+	mutex_lock(&pmic->xfer_lock);
+	data = cpu_to_le32(data);
+	ret = i2c_smbus_write_i2c_block_data(pmic->client, reg, 4, (u8 *) &data);
+	mutex_unlock(&pmic->xfer_lock);
+	
+	return ret;
+}
+
+static int stm32f0_pmic_rtc_read_time(struct device *dev, struct rtc_time *tm) {
+	struct stm32f0_pmic *pmic = dev_get_drvdata(dev);
+	s32 ret = 0;
+	unsigned long time = stm32f0_pmic_read(pmic, PMIC_REG_RTC_TIME, &ret);
+	rtc_time64_to_tm(time, tm);
+	return ret;
+}
+
+static int stm32f0_pmic_rtc_set_time(struct device *dev, struct rtc_time *tm) {
+	struct stm32f0_pmic *pmic = dev_get_drvdata(dev);
+	return stm32f0_pmic_write(pmic, PMIC_REG_RTC_TIME, rtc_tm_to_time64(tm));
+}
+
+static const struct rtc_class_ops stm32f0_pmic_rtc_ops = {
+	.read_time	= stm32f0_pmic_rtc_read_time,
+	.set_time	= stm32f0_pmic_rtc_set_time,
+};
+
+static int stm32f0_pmic_register_rtc(struct stm32f0_pmic *pmic) {
+	printk("stm32f0_pmic_register_rtc!\n");
+	pmic->rtc = devm_rtc_device_register(pmic->dev, "stm32f0-pmic", &stm32f0_pmic_rtc_ops, THIS_MODULE);
+	return PTR_ERR_OR_ZERO(pmic->rtc);
 }
 
 static enum power_supply_property stm32f0_pmic_charger_prop[] = {
@@ -76,21 +115,22 @@ static char *battery_supplied_to[] = {
 
 static int stm32f0_pmic_charger_get_property(struct power_supply *psy, enum power_supply_property psp, union power_supply_propval *val) {
 	struct stm32f0_pmic *pmic = dev_get_drvdata(psy->dev.parent);
+	s32 ret = 0;
 	switch (psp) {
 		case POWER_SUPPLY_PROP_ONLINE:
-			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS) & PMIC_DCIN_GOOD) ? 1 : 0;
+			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret) & PMIC_DCIN_GOOD) ? 1 : 0;
 		break;
 		
 		case POWER_SUPPLY_PROP_PRESENT:
-			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS) & PMIC_DCIN_PRESENT) ? 1 : 0;
+			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret) & PMIC_DCIN_PRESENT) ? 1 : 0;
 		break;
 		
 		case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_DCIN_VOLTAGE) * 1000;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_DCIN_VOLTAGE, &ret) * 1000;
 		break;
 		
 		case POWER_SUPPLY_PROP_TEMP:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_CPU_TEMP) / 100;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_CPU_TEMP, &ret) / 100;
 		break;
 		
 		default:
@@ -98,23 +138,24 @@ static int stm32f0_pmic_charger_get_property(struct power_supply *psy, enum powe
 			return -EINVAL;
 		break;
 	}
-	return 0;
+	return ret;
 }
 
 static int stm32f0_pmic_battery_get_property(struct power_supply *psy, enum power_supply_property psp, union power_supply_propval *val) {
 	struct stm32f0_pmic *pmic = dev_get_drvdata(psy->dev.parent);
 	u32 tmp;
+	s32 ret = 0;
 	switch (psp) {
 		case POWER_SUPPLY_PROP_ONLINE:
-			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS) & PMIC_DCIN_GOOD) ? 0 : 1;
+			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret) & PMIC_DCIN_GOOD) ? 0 : 1;
 		break;
 		
 		case POWER_SUPPLY_PROP_PRESENT:
-			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS) & PMIC_BAT_PRESENT) ? 1 : 0;
+			val->intval = (stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret) & PMIC_BAT_PRESENT) ? 1 : 0;
 		break;
 		
 		case POWER_SUPPLY_PROP_STATUS:
-			tmp = stm32f0_pmic_read(pmic, PMIC_REG_STATUS);
+			tmp = stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret);
 			
 			if ((tmp & PMIC_DCIN_GOOD)) {
 				if ((tmp & PMIC_BAT_CHARGE_EN)) {
@@ -128,7 +169,7 @@ static int stm32f0_pmic_battery_get_property(struct power_supply *psy, enum powe
 		break;
 		
 		case POWER_SUPPLY_PROP_HEALTH:
-			tmp = stm32f0_pmic_read(pmic, PMIC_REG_STATUS);
+			tmp = stm32f0_pmic_read(pmic, PMIC_REG_STATUS, &ret);
 			
 			if ((tmp & (PMIC_BAT_HIGH_TEMP | PMIC_BAT_CHARGE_HIGH_TEMP))) {
 				val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
@@ -140,23 +181,23 @@ static int stm32f0_pmic_battery_get_property(struct power_supply *psy, enum powe
 		break;
 		
 		case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_GET_MAX_BAT_VOLTAGE) * 1000;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_GET_MAX_BAT_VOLTAGE, &ret) * 1000;
 		break;
 		
 		case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_GET_MIN_BAT_VOLTAGE) * 1000;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_GET_MIN_BAT_VOLTAGE, &ret) * 1000;
 		break;
 		
 		case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_VOLTAGE) * 1000;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_VOLTAGE, &ret) * 1000;
 		break;
 		
 		case POWER_SUPPLY_PROP_CAPACITY:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_PCT) / 1000;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_PCT, &ret) / 1000;
 		break;
 		
 		case POWER_SUPPLY_PROP_TEMP:
-			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_TEMP) / 100;
+			val->intval = (s32) stm32f0_pmic_read(pmic, PMIC_REG_BAT_TEMP, &ret) / 100;
 		break;
 		
 		case POWER_SUPPLY_PROP_TECHNOLOGY:
@@ -168,7 +209,7 @@ static int stm32f0_pmic_battery_get_property(struct power_supply *psy, enum powe
 			return -EINVAL;
 		break;
 	}
-	return 0;
+	return ret;
 }
 
 static const struct power_supply_desc stm32f0_pmic_dcin_desc = {
@@ -240,6 +281,13 @@ static int stm32f0_pmic_probe(struct i2c_client *i2c_client) {
 		dev_err(pmic->dev, "power supplies register err: %d", ret);
 		return ret;
 	}
+	
+	ret = stm32f0_pmic_register_rtc(pmic);
+	if (ret) {
+		dev_err(pmic->dev, "rtc register err: %d", ret);
+		return ret;
+	}
+	
 	/*
 	ret = stm32f0_pmic_setup_irq(pmic);
 	if (ret) {
