@@ -168,6 +168,7 @@ void App::monitorTask(void *) {
 		}
 	}
 	
+	/*
 	if (is(POWER_ON)) {
 		if (is(DCIN_GOOD) || Loop::ms() - m_last_pwron <= 30000) {
 			gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
@@ -175,7 +176,9 @@ void App::monitorTask(void *) {
 			gpio_clear(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
 			setPwrLedPulse(1);
 		}
+		gpio_set(Pinout::PWR_LED.port, Pinout::PWR_LED.pin);
 	}
+	*/
 	
 	uint32_t next_timeout = 30000;
 	if (is(BAT_CHARGING)) {
@@ -385,7 +388,7 @@ void App::onPwrKey(void *, Button::Event evt) {
 bool App::idleHook(void *) {
 	LOGD("No tasks, going to deep sleep...\r\n\r\n\r\n");
 	Loop::suspend(false);
-	allowDeepSleep(false);
+	allowDeepSleep(true);
 	return true;
 }
 

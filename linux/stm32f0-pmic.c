@@ -5,6 +5,9 @@
 #include <linux/of.h>
 #include <linux/power_supply.h>
 #include <linux/rtc.h>
+#include <linux/delay.h>
+#include <linux/reboot.h>
+#include <linux/input.h>
 
 #define PMIC_DCIN_GOOD				(1 << 0)
 #define PMIC_DCIN_PRESENT			(1 << 1)
@@ -39,9 +42,16 @@ struct stm32f0_pmic {
 	struct rtc_device *rtc;
 	struct mutex xfer_lock;
 	
+	int irq;
+	struct delayed_work work;
+	struct input_dev *input;
+	
 	struct power_supply *psy_dcin;
 	struct power_supply *psy_bat;
 };
+
+static struct stm32f0_pmic *pmic_for_poweroff = NULL;
+static struct notifier_block pmic_restart_handler;
 
 static u32 stm32f0_pmic_read(struct stm32f0_pmic *pmic, u8 reg, s32 *ret) {
 	u32 data = 0;
@@ -66,6 +76,37 @@ static s32 stm32f0_pmic_write(struct stm32f0_pmic *pmic, u8 reg, u32 data) {
 	return ret;
 }
 
+static int stm32f0_pmic_restart(struct notifier_block *this, unsigned long mode, void *cmd) {
+	if (pmic_for_poweroff) {
+		for (int i = 0; i < 10; i++) {
+			if (stm32f0_pmic_write(pmic_for_poweroff, PMIC_REG_POWER_OFF, 2) == 0)
+				break;
+			mdelay(300);
+		}
+		
+		mdelay(3000);
+		WARN_ON(1);
+	} else {
+		panic("%s: pmic_for_poweroff not set!!!", __func__);
+	}
+	return NOTIFY_DONE;
+}
+
+static void stm32f0_pmic_do_poweroff(void) {
+	if (pmic_for_poweroff) {
+		for (int i = 0; i < 10; i++) {
+			if (stm32f0_pmic_write(pmic_for_poweroff, PMIC_REG_POWER_OFF, 1) == 0)
+				break;
+			mdelay(300);
+		}
+		
+		mdelay(3000);
+		WARN_ON(1);
+	} else {
+		panic("%s: pmic_for_poweroff not set!!!", __func__);
+	}
+}
+
 static int stm32f0_pmic_rtc_read_time(struct device *dev, struct rtc_time *tm) {
 	struct stm32f0_pmic *pmic = dev_get_drvdata(dev);
 	s32 ret = 0;
@@ -85,9 +126,62 @@ static const struct rtc_class_ops stm32f0_pmic_rtc_ops = {
 };
 
 static int stm32f0_pmic_register_rtc(struct stm32f0_pmic *pmic) {
-	printk("stm32f0_pmic_register_rtc!\n");
 	pmic->rtc = devm_rtc_device_register(pmic->dev, "stm32f0-pmic", &stm32f0_pmic_rtc_ops, THIS_MODULE);
 	return PTR_ERR_OR_ZERO(pmic->rtc);
+}
+
+static void stm32f0_pmic_delayed_func(struct work_struct *_work) {
+	struct stm32f0_pmic *pmic = container_of(_work, struct stm32f0_pmic, work.work);
+	
+	s32 ret;
+	u32 irq;
+	
+	irq = stm32f0_pmic_read(pmic, PMIC_REG_IRQ_STATUS, &ret);
+	if (ret != 0) {
+		input_report_key(pmic->input, KEY_POWER, false);
+		input_sync(pmic->input);
+		
+		dev_err(pmic->dev, "can not read PMIC_REG_IRQ_STATUS\n");
+		return;
+	}
+	
+	input_report_key(pmic->input, KEY_POWER, (irq & PMIC_PWR_KEY_PRESSED) != 0);
+	input_sync(pmic->input);
+	
+	power_supply_changed(pmic->psy_dcin);
+	power_supply_changed(pmic->psy_bat);
+}
+
+static irqreturn_t stm32f0_pmic_isr_func(int irq, void *ptr) {
+	struct stm32f0_pmic *pmic = ptr;
+	schedule_delayed_work(&pmic->work, msecs_to_jiffies(10));
+	return IRQ_HANDLED;
+}
+
+static int stm32f0_pmic_setup_irq(struct stm32f0_pmic *pmic) {
+	int ret;
+	int irq = pmic->client->irq;
+	
+	INIT_DELAYED_WORK(&pmic->work, stm32f0_pmic_delayed_func);
+	
+	if (irq <= 0) {
+		dev_warn(pmic->dev, "invalid irq number: %d\n", irq);
+		return 0;
+	}
+	
+	ret = request_threaded_irq(irq,	NULL, stm32f0_pmic_isr_func, IRQF_TRIGGER_RISING | IRQF_ONESHOT, "stm32f0_pmic_irq", pmic);
+	if (ret)
+		return ret;
+	
+	pmic->irq = irq;
+	
+	return 0;
+}
+
+static void stm32f0_pmic_release_irq(struct stm32f0_pmic *pmic) {
+	cancel_delayed_work_sync(&pmic->work);
+	if (pmic->irq)
+		free_irq(pmic->irq, pmic);
 }
 
 static enum power_supply_property stm32f0_pmic_charger_prop[] = {
@@ -249,6 +343,36 @@ err_psy_dcin:
 	return -EPERM;
 }
 
+static void stm32f0_pmic_unregister_input(struct stm32f0_pmic *pmic) {
+	if (pmic->input) {
+		input_unregister_device(pmic->input);
+		pmic->input = NULL;
+	}
+}
+
+static int stm32f0_pmic_register_input(struct stm32f0_pmic *pmic) {
+	s32 ret;
+	
+	pmic->input = devm_input_allocate_device(pmic->dev);
+	if (!pmic->input)
+		return -ENOMEM;
+	
+	pmic->input->name = "stm32f0-pmic/pwr-key";
+	pmic->input->phys = "stm32f0-pmic/pwr-key";
+	pmic->input->dev.parent = pmic->dev;
+	
+	input_set_capability(pmic->input, EV_KEY, KEY_POWER);
+	input_set_drvdata(pmic->input, pmic);
+	
+	ret = input_register_device(pmic->input);
+	if (ret) {
+		dev_err(pmic->dev, "Can't register input device: %d\n", ret);
+		return ret;
+	}
+	
+	return 0;
+}
+
 static void stm32f0_pmic_unregister_psy(struct stm32f0_pmic *pmic) {
 	power_supply_unregister(pmic->psy_dcin);
 	power_supply_unregister(pmic->psy_bat);
@@ -268,14 +392,6 @@ static int stm32f0_pmic_probe(struct i2c_client *i2c_client) {
 	
 	mutex_init(&pmic->xfer_lock);
 	
-	/*
-	ret = stm32f0_pmic_init_device(pmic);
-	if (ret) {
-		dev_err(pmic->dev, "i2c communication err: %d", ret);
-		return ret;
-	}
-	*/
-	
 	ret = stm32f0_pmic_register_psy(pmic);
 	if (ret) {
 		dev_err(pmic->dev, "power supplies register err: %d", ret);
@@ -288,22 +404,60 @@ static int stm32f0_pmic_probe(struct i2c_client *i2c_client) {
 		return ret;
 	}
 	
-	/*
 	ret = stm32f0_pmic_setup_irq(pmic);
 	if (ret) {
 		dev_err(pmic->dev, "irq handler err: %d", ret);
 		stm32f0_pmic_unregister_psy(pmic);
 		return ret;
 	}
-	*/
+	
+	ret = stm32f0_pmic_register_input(pmic);
+	if (ret) {
+		dev_err(pmic->dev, "pwr key err: %d", ret);
+		stm32f0_pmic_unregister_psy(pmic);
+		stm32f0_pmic_release_irq(pmic);
+		return ret;
+	}
+	
+	pmic_restart_handler.notifier_call = stm32f0_pmic_restart;
+	pmic_restart_handler.priority = 192;
+	
+	if (!pmic_for_poweroff) {
+		pmic_for_poweroff = pmic;
+		
+		ret = register_restart_handler(&pmic_restart_handler);
+		if (ret) {
+			dev_err(pmic->dev, "cannot register restart handler, %d\n", ret);
+			stm32f0_pmic_unregister_psy(pmic);
+			stm32f0_pmic_release_irq(pmic);
+			stm32f0_pmic_unregister_input(pmic);
+			return ret;
+		}
+		
+		if (pm_power_off != NULL) {
+			dev_err(pmic->dev, "%s: pm_power_off function already registered", __func__);
+		} else {
+			pm_power_off = &stm32f0_pmic_do_poweroff;
+		}
+	}
+	
 	return 0;
 }
 
 static int stm32f0_pmic_remove(struct i2c_client *cl) {
 	struct stm32f0_pmic *pmic = i2c_get_clientdata(cl);
-
-	//stm32f0_pmic_release_irq(pmic);
+	
+	if (pmic_for_poweroff == pmic) {
+		pmic_for_poweroff = NULL;
+		unregister_restart_handler(&pmic_restart_handler);
+	}
+	
+	if (pm_power_off == &stm32f0_pmic_do_poweroff)
+		pm_power_off = NULL;
+	
+	stm32f0_pmic_release_irq(pmic);
 	stm32f0_pmic_unregister_psy(pmic);
+	stm32f0_pmic_unregister_input(pmic);
 	
 	return 0;
 }

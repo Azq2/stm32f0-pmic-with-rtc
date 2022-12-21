@@ -106,5 +106,5 @@ int AnalogMon::toTemperature(int raw_value, const Config::Temp &calibration) {
 }
 
 int AnalogMon::getBatPct() {
-	return ((getVbat() - Config::BAT.v_min) * 100000) / (Config::BAT.v_max - Config::BAT.v_min);
+	return std::min(100 * 1000, std::max(0, ((getVbat() - Config::BAT.v_min) * 100 * 1000) / (Config::BAT.v_max - Config::BAT.v_min)));
 }
