@@ -444,7 +444,7 @@ static int stm32f0_pmic_probe(struct i2c_client *i2c_client) {
 	return 0;
 }
 
-static int stm32f0_pmic_remove(struct i2c_client *cl) {
+static void stm32f0_pmic_remove(struct i2c_client *cl) {
 	struct stm32f0_pmic *pmic = i2c_get_clientdata(cl);
 	
 	if (pmic_for_poweroff == pmic) {
@@ -458,8 +458,6 @@ static int stm32f0_pmic_remove(struct i2c_client *cl) {
 	stm32f0_pmic_release_irq(pmic);
 	stm32f0_pmic_unregister_psy(pmic);
 	stm32f0_pmic_unregister_input(pmic);
-	
-	return 0;
 }
 
 static const struct of_device_id stm32f0_pmic_dt_ids[] = {
@@ -477,7 +475,7 @@ MODULE_DEVICE_TABLE(i2c, stm32f0_pmic_ids);
 static struct i2c_driver stm32f0_pmic_driver = {
 	.driver = {
 		.name = "stm32f0-pmic",
-		.of_match_table = of_match_ptr(pmic_dt_ids),
+		.of_match_table = of_match_ptr(stm32f0_pmic_dt_ids),
 	},
 	.probe_new = stm32f0_pmic_probe,
 	.remove = stm32f0_pmic_remove,

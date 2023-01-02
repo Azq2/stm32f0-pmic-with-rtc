@@ -1,0 +1,22 @@
+Source: stm32f0-pmic-dkms
+Section: kernel
+Priority: optional
+Maintainer: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 12),
+ dh-modaliases,
+ dkms,
+ quilt,
+Standards-Version: 4.5.0
+Homepage: https://github.com/Azq2/stm32f0-pmic-with-rtc/
+Vcs-Git: https://github.com/Azq2/stm32f0-pmic-with-rtc/
+Vcs-Browser: https://github.com/Azq2/stm32f0-pmic-with-rtc/
+
+Package: stm32f0-pmic-dkms
+Architecture: all
+Depends:
+ ${misc:Depends},
+ bc,
+ dkms,
+Description: DKMS source for the stm32f0-pmic-with-rtc

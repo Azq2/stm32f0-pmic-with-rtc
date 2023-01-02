@@ -1,0 +1,5 @@
+stm32f0-pmic-dkms (1.0) UNRELEASED; urgency=medium
+
+  * Initial release.
+
+ -- MAINTAINER <kirill.zhumarin@gmail.com>  Tue, 03 Jan 2023 00:40:38 +0200
