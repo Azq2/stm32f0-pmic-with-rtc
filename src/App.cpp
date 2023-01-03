@@ -502,7 +502,7 @@ int App::run() {
 	
 	// Watchdog task
 	m_task_watchdog.init(Task::Callback::make<&App::watchdogTask>(*this));
-	m_task_watchdog.setInterval(Config::WATCHDOG_TIMEOUT);
+	m_task_watchdog.setTimeout(0);
 	
 	// Power key
 	m_pwr_key.update(gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin) != 0);
