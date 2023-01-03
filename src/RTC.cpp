@@ -58,10 +58,12 @@ void RTC::init() {
 	pwr_enable_backup_domain_write_protect();
 	
 	if (RTC_BKPXR(0) != RTC_INIT_MAGIC) {
-		setDateTime(2021, 12, 19, 2, 36, 5);
+		setDateTime(2022, 12, 19, 2, 36, 5);
 		
 		pwr_disable_backup_domain_write_protect();
 		RTC_BKPXR(0) = RTC_INIT_MAGIC;
+		for (int i = 1; i < 42; i++)
+			RTC_BKPXR(i) = 0;
 		pwr_enable_backup_domain_write_protect();
 	}
 }

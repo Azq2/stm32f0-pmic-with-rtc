@@ -17,6 +17,8 @@
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/rtc.h>
+#include <libopencm3/stm32/pwr.h>
+#include <libopencm3/stm32/iwdg.h>
 
 bool App::setStateBit(uint32_t bit, bool value) {
 	bool is_changed = (value != is(bit));
@@ -26,8 +28,10 @@ bool App::setStateBit(uint32_t bit, bool value) {
 		m_state &= ~bit;
 	}
 	
-	if (is_changed)
+	if (is_changed) {
 		gpio_set(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+		m_task_irq_pulse.setTimeout(10);
+	}
 	
 	return is_changed;
 }
@@ -64,8 +68,9 @@ void App::initHw() {
 	gpio_clear(Pinout::CHARGER_EN.port, Pinout::CHARGER_EN.pin);
 	
 	// I2C_IRQ
+    gpio_set_output_options(Pinout::I2C_IRQ.port, GPIO_OTYPE_OD, GPIO_OSPEED_LOW, Pinout::I2C_IRQ.pin);
     gpio_mode_setup(Pinout::I2C_IRQ.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::I2C_IRQ.pin);
-    gpio_clear(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+    gpio_set(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
 	
 	// PWR_KEY
 	gpio_mode_setup(Pinout::PWR_KEY.port, GPIO_MODE_INPUT, GPIO_PUPD_NONE, Pinout::PWR_KEY.pin);
@@ -112,6 +117,15 @@ void App::checkBatteryTemp(const char *name, int min, int max, Flags flag_lo, Fl
 		LOGD("Battery %s is to HIGH!!! (%d.%d °C)\r\n", name, idec(temp), iexp(temp));
 		setStateBit(flag_hi, true);
 	}
+}
+
+void App::watchdogTask(void *) {
+	iwdg_reset();
+	m_task_watchdog.setTimeout(Config::WATCHDOG_TIMEOUT - 5000);
+}
+
+void App::irqPulseTask(void *) {
+	gpio_clear(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
 }
 
 void App::monitorTask(void *) {
@@ -221,13 +235,16 @@ void App::monitorTask(void *) {
 	}
 	
 	m_task_analog_mon.setTimeout(next_timeout);
+	iwdg_reset();
 }
 
 void App::allowDeepSleep(bool flag) {
 	if (flag) {
 		m_task_analog_mon.cancel();
+		m_task_watchdog.cancel();
 	} else {
 		m_task_analog_mon.setTimeout(0);
+		m_task_watchdog.setTimeout(0);
 	}
 }
 
@@ -368,14 +385,21 @@ void App::onPwrKey(void *, Button::Event evt) {
 
 bool App::idleHook(void *) {
 	LOGD("No tasks, going to deep sleep...\r\n\r\n\r\n");
+	
+	pwr_disable_backup_domain_write_protect();
+	RTC_BKPXR(1) = (m_state & USER_POWER_OFF);
+	pwr_enable_backup_domain_write_protect();
+	
 	Loop::suspend(true);
 	allowDeepSleep(false);
 	return true;
 }
 
 uint32_t App::readReg(void *, uint8_t reg) {
-	if (reg == I2C_REG_IRQ_STATUS)
-		gpio_clear(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+	if (reg == I2C_REG_IRQ_STATUS) {
+		gpio_set(Pinout::I2C_IRQ.port, Pinout::I2C_IRQ.pin);
+		m_task_irq_pulse.cancel();
+	}
 	
 	switch (reg) {
 		case I2C_REG_STATUS:				return m_state;
@@ -422,9 +446,17 @@ void App::writeReg(void *, uint8_t reg, uint32_t value) {
 
 int App::run() {
 	initHw();
+	
+	iwdg_reset();
+	iwdg_set_period_ms(Config::WATCHDOG_TIMEOUT);
+	iwdg_start();
+	
 	RTC::init();
 	Loop::init();
 	m_mon.init();
+	
+	// Restore settings
+	m_state = RTC_BKPXR(1);
 	
 	#if DEBUG_CALIBRATE_RTC
 	gpio_mode_setup(Pinout::USART_TX.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, Pinout::USART_TX.pin);
@@ -461,9 +493,16 @@ int App::run() {
 	// Idle hook
 	Loop::setIdleCallback(Loop::IdleCallback::make<&App::idleHook>(*this));
 	
+	// IRQ pulse
+	m_task_irq_pulse.init(Task::Callback::make<&App::irqPulseTask>(*this));
+	
 	// Analog monitor task
 	m_task_analog_mon.init(Task::Callback::make<&App::monitorTask>(*this));
 	m_task_analog_mon.setTimeout(0);
+	
+	// Watchdog task
+	m_task_watchdog.init(Task::Callback::make<&App::watchdogTask>(*this));
+	m_task_watchdog.setInterval(Config::WATCHDOG_TIMEOUT);
 	
 	// Power key
 	m_pwr_key.update(gpio_get(Pinout::PWR_KEY.port, Pinout::PWR_KEY.pin) != 0);

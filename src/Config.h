@@ -7,6 +7,8 @@
 #define DEBUG_CALIBRATE_BAT_TEMP	0	// Output bat temp in voltage
 
 namespace Config {
+	constexpr uint32_t WATCHDOG_TIMEOUT				= 60000;
+	
 	constexpr uint32_t CHARGING_BAD_TEMP_TIMEOUT	= 1000 * 60 * 30;
 	constexpr uint32_t CHARGING_LOST_DCIN_TIMEOUT	= 1000 * 5;
 	constexpr uint32_t CHARGING_BAD_DCIN_TIMEOUT	= 1000 * 60 * 30;
