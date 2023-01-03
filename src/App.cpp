@@ -47,6 +47,7 @@ void App::initHw() {
 	rcc_periph_clock_enable(RCC_RTC);
 	rcc_periph_clock_enable(RCC_PWR);
 	rcc_periph_clock_enable(RCC_I2C1);
+	rcc_periph_clock_enable(RCC_TIM14);
 	
 	// Set clock to 4 MHz (low power)
 	/*
@@ -122,14 +123,6 @@ void App::checkBatteryTemp(const char *name, int min, int max, Flags flag_lo, Fl
 	if (!is(flag_hi) && temp >= max) {
 		LOGD("Battery %s is to HIGH!!! (%d.%d °C)\r\n", name, idec(temp), iexp(temp));
 		setStateBit(flag_hi, true);
-	}
-}
-
-void App::buzzerTask(void *) {
-	if (m_buzzer_freq) {
-		Buzzer::play(m_buzzer_freq, m_buzzer_vol);
-	} else {
-		Buzzer::stop();
 	}
 }
 
@@ -362,9 +355,8 @@ void App::powerOff(bool user) {
 	setStateBit(POWER_ON, false);
 	setStateBit(USER_POWER_OFF, user);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
-	m_buzzer_freq = 0;
+	Buzzer::stop();
 	m_task_analog_mon.setTimeout(0);
-	m_task_buzzer.setTimeout(0);
 }
 
 void App::onDcinChange(void *, bool) {
@@ -461,7 +453,12 @@ void App::writeReg(void *, uint8_t reg, uint32_t value) {
 		case I2C_REG_PLAY_BUZZER:
 			m_buzzer_freq = (value >> 8) & 0xFFFF;
 			m_buzzer_vol = value & 0xFF;
-			m_task_buzzer.setTimeout(0);
+			
+			if (m_buzzer_vol) {
+				Buzzer::play(m_buzzer_freq, m_buzzer_vol);
+			} else {
+				Buzzer::stop();
+			}
 		break;
 	}
 }
@@ -518,9 +515,6 @@ int App::run() {
 	
 	// IRQ pulse
 	m_task_irq_pulse.init(Task::Callback::make<&App::irqPulseTask>(*this));
-	
-	// Buzzer task
-	m_task_buzzer.init(Task::Callback::make<&App::buzzerTask>(*this));
 	
 	// Analog monitor task
 	m_task_analog_mon.init(Task::Callback::make<&App::monitorTask>(*this));

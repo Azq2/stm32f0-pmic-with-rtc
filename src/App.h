@@ -84,7 +84,6 @@ class App {
 		Task m_task_analog_mon;
 		Task m_task_watchdog;
 		Task m_task_irq_pulse;
-		Task m_task_buzzer;
 		
 		uint32_t m_state = 0;
 		Button m_pwr_key = {};
@@ -113,7 +112,6 @@ class App {
 		void monitorTask(void *);
 		void watchdogTask(void *);
 		void irqPulseTask(void *);
-		void buzzerTask(void *);
 		
 		void onDcinChange(void *, bool state);
 		void onBatChange(void *, bool state);
