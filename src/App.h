@@ -49,6 +49,7 @@ class App {
 			I2C_REG_GET_MIN_BAT_VOLTAGE,
 			I2C_REG_POWER_OFF,
 			I2C_REG_RTC_TIME,
+			I2C_REG_PLAY_BUZZER,
 		};
 		
 		enum ChrgFailureReason {

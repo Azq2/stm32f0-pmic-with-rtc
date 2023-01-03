@@ -9,6 +9,7 @@
 #include "Gpio.h"
 #include "RTC.h"
 #include "Button.h"
+#include "Buzzer.h"
 #include "Debug.h"
 #include "utils.h"
 
@@ -77,6 +78,11 @@ void App::initHw() {
 	
 	// CHARGER_STATUS
 	gpio_mode_setup(Pinout::CHARGER_STATUS.port, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, Pinout::CHARGER_STATUS.pin);
+	
+	// BUZZER_PWM
+	gpio_set_output_options(Pinout::BUZZER_PWM.port, GPIO_OTYPE_PP, GPIO_OSPEED_LOW, Pinout::BUZZER_PWM.pin);
+	gpio_mode_setup(Pinout::BUZZER_PWM.port, GPIO_MODE_AF, GPIO_PUPD_NONE, Pinout::BUZZER_PWM.pin);
+	gpio_set_af(Pinout::BUZZER_PWM.port, GPIO_AF4, Pinout::BUZZER_PWM.pin);
 	
 	// I2C
 	gpio_set_output_options(Pinout::I2C_SCL.port, GPIO_OTYPE_OD, GPIO_OSPEED_LOW, Pinout::I2C_SCL.pin);
@@ -349,6 +355,7 @@ void App::powerOff(bool user) {
 	setStateBit(USER_POWER_OFF, user);
 	gpio_clear(Pinout::VCC_EN.port, Pinout::VCC_EN.pin);
 	m_task_analog_mon.setTimeout(0);
+	Buzzer::stop();
 }
 
 void App::onDcinChange(void *, bool) {
@@ -441,6 +448,14 @@ void App::writeReg(void *, uint8_t reg, uint32_t value) {
 			RTC::fromUnixTime(value, &new_tm);
 			RTC::setDateTime(new_tm.year, new_tm.month, new_tm.day, new_tm.hours, new_tm.minutes, new_tm.seconds);
 		break;
+		
+		case I2C_REG_PLAY_BUZZER:
+			if (value) {
+				Buzzer::play((value >> 8) & 0xFFFF, value & 0xFF);
+			} else {
+				Buzzer::stop();
+			}
+		break;
 	}
 }
 
@@ -453,6 +468,7 @@ int App::run() {
 	
 	RTC::init();
 	Loop::init();
+	Buzzer::init();
 	m_mon.init();
 	
 	// Restore settings

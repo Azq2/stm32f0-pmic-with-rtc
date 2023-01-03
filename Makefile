@@ -10,6 +10,7 @@ CXXFLAGS += -fno-builtin-printf
 CXXFILES += src/App.cpp
 CXXFILES += src/AnalogMon.cpp
 CXXFILES += src/Exti.cpp
+CXXFILES += src/Buzzer.cpp
 CXXFILES += src/Button.cpp
 CXXFILES += src/Loop.cpp
 CXXFILES += src/Task.cpp

@@ -45,6 +45,7 @@ struct stm32f0_pmic {
 	int irq;
 	struct delayed_work work;
 	struct input_dev *input;
+	struct input_dev *beeper;
 	
 	struct power_supply *psy_dcin;
 	struct power_supply *psy_bat;
@@ -128,6 +129,82 @@ static const struct rtc_class_ops stm32f0_pmic_rtc_ops = {
 static int stm32f0_pmic_register_rtc(struct stm32f0_pmic *pmic) {
 	pmic->rtc = devm_rtc_device_register(pmic->dev, "stm32f0-pmic", &stm32f0_pmic_rtc_ops, THIS_MODULE);
 	return PTR_ERR_OR_ZERO(pmic->rtc);
+}
+
+static int stm32f0_pmic_beeper_event(struct input_dev *input, u32 type, u32 code, s32 value) {
+	struct stm32f0_pmic *pmic = input_get_drvdata(input);
+	
+	if (type != EV_SND || value < 0)
+		return -EINVAL;
+	
+	switch (code) {
+		case SND_BELL:
+			value = value ? 1000 : 0;
+		break;
+		
+		case SND_TONE:
+		break;
+		
+		default:
+			return -EINVAL;
+	}
+	
+	if (value < 0)
+		value = 0;
+	
+	if (value > 0xFFFF)
+		value = 0xFFFF;
+	
+	stm32f0_pmic_write(pmic, PMIC_REG_PLAY_BUZZER, (value << 8) | 1);
+	
+	return 0;
+}
+
+static void stm32f0_pmic_beeper_stop(struct stm32f0_pmic *pmic) {
+	stm32f0_pmic_write(pmic, PMIC_REG_PLAY_BUZZER, 0);
+}
+
+static void stm32f0_pmic_beeper_close(struct input_dev *input) {
+	struct stm32f0_pmic *pmic = input_get_drvdata(input);
+	stm32f0_pmic_beeper_stop(pmic);
+}
+
+static int stm32f0_pmic_register_beeper(struct stm32f0_pmic *pmic) {
+	int error;
+	
+	pmic->beeper = devm_input_allocate_device(dev);
+	if (!pmic->beeper) {
+		dev_err(&pmic->dev, "Failed to allocate input device\n");
+		return -ENOMEM;
+	}
+	
+	pmic->beeper->name = "stm32f0-pmic/beeper";
+	pmic->beeper->phys = "stm32f0-pmic/beeper";
+	pmic->beeper->id.bustype = BUS_HOST;
+	
+	input_set_capability(pmic->beeper, EV_SND, SND_TONE);
+	input_set_capability(pmic->beeper, EV_SND, SND_BELL);
+	
+	pmic->beeper->event = stm32f0_pmic_beeper_event;
+	pmic->beeper->close = stm32f0_pmic_beeper_close;
+	
+	input_set_drvdata(pmic->beeper, pmic);
+	
+	error = input_register_device(pmic->beeper);
+	if (error) {
+		dev_err(&pmic->dev, "Failed to register input device: %d\n", error);
+		return error;
+	}
+	
+	return 0;
+}
+
+static void stm32f0_pmic_unregister_beeper(struct stm32f0_pmic *pmic) {
+	if (pmic->beeper) {
+		stm32f0_pmic_beeper_stop(pmic);
+		input_unregister_device(pmic->beeper);
+		pmic->beeper = NULL;
+	}
 }
 
 static void stm32f0_pmic_delayed_func(struct work_struct *_work) {
@@ -458,6 +535,7 @@ static void stm32f0_pmic_remove(struct i2c_client *cl) {
 	stm32f0_pmic_release_irq(pmic);
 	stm32f0_pmic_unregister_psy(pmic);
 	stm32f0_pmic_unregister_input(pmic);
+	stm32f0_pmic_unregister_beeper(pmic);
 }
 
 static const struct of_device_id stm32f0_pmic_dt_ids[] = {
