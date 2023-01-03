@@ -76,12 +76,15 @@ class App {
 		int64_t m_dcin_connected = 0;
 		int64_t m_last_pwron = 0;
 		int64_t m_last_info_print = 0;
+		uint32_t m_buzzer_freq = 0;
+		uint32_t m_buzzer_vol = 0;
 		
 		PwrOnFailureReason m_last_pwron_fail = PWR_FAIL_NONE;
 		
 		Task m_task_analog_mon;
 		Task m_task_watchdog;
 		Task m_task_irq_pulse;
+		Task m_task_buzzer;
 		
 		uint32_t m_state = 0;
 		Button m_pwr_key = {};
@@ -110,6 +113,8 @@ class App {
 		void monitorTask(void *);
 		void watchdogTask(void *);
 		void irqPulseTask(void *);
+		void buzzerTask(void *);
+		
 		void onDcinChange(void *, bool state);
 		void onBatChange(void *, bool state);
 		void onChargerStatus(void *, Button::Event evt);

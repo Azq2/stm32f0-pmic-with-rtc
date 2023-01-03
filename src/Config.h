@@ -2,7 +2,7 @@
 
 #include "ConfigDef.h"
 
-#define DEBUG						1	// USART debug
+#define DEBUG						0	// USART debug
 #define DEBUG_CALIBRATE_RTC			0	// Output RTC freq to USART_TX pin
 #define DEBUG_CALIBRATE_BAT_TEMP	0	// Output bat temp in voltage
 

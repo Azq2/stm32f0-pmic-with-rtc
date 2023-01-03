@@ -19,12 +19,9 @@ void Buzzer::init() {
 	timer_enable_oc_preload(TIM14, TIM_OC1);
 	timer_set_oc_polarity_high(TIM14, TIM_OC1);
 	timer_enable_oc_output(TIM14, TIM_OC1);
-	
-	rcc_periph_clock_disable(RCC_TIM14);
 }
 
 void Buzzer::play(uint32_t freq, uint32_t duty_pct) {
-	rcc_periph_clock_enable(RCC_TIM14);
 	uint32_t apr = 0;
 	uint32_t psc = 0;
 	
@@ -42,19 +39,11 @@ void Buzzer::play(uint32_t freq, uint32_t duty_pct) {
 	timer_set_period(TIM14, apr - 1);
 	timer_set_oc_value(TIM14, TIM_OC1, duty_period);
 	
-	if (!m_playing) {
-		timer_enable_preload(TIM14);
-		timer_enable_counter(TIM14);
-	}
-	
-	m_playing = true;
+	timer_enable_preload(TIM14);
+	timer_enable_counter(TIM14);
 }
 
 void Buzzer::stop() {
-	if (m_playing) {
-		timer_disable_preload(TIM14);
-		timer_disable_counter(TIM14);
-		rcc_periph_clock_disable(RCC_TIM14);
-		m_playing = false;
-	}
+	timer_disable_preload(TIM14);
+	timer_disable_counter(TIM14);
 }
