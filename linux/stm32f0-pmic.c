@@ -231,7 +231,7 @@ static void stm32f0_pmic_delayed_func(struct work_struct *_work) {
 
 static irqreturn_t stm32f0_pmic_isr_func(int irq, void *ptr) {
 	struct stm32f0_pmic *pmic = ptr;
-	schedule_delayed_work(&pmic->work, msecs_to_jiffies(10));
+	schedule_delayed_work(&pmic->work, msecs_to_jiffies(0));
 	return IRQ_HANDLED;
 }
 
@@ -246,7 +246,7 @@ static int stm32f0_pmic_setup_irq(struct stm32f0_pmic *pmic) {
 		return 0;
 	}
 	
-	ret = request_threaded_irq(irq,	NULL, stm32f0_pmic_isr_func, IRQF_TRIGGER_RISING | IRQF_ONESHOT, "stm32f0_pmic_irq", pmic);
+	ret = request_threaded_irq(irq,	NULL, stm32f0_pmic_isr_func, IRQF_TRIGGER_FALLING | IRQF_ONESHOT, "stm32f0_pmic_irq", pmic);
 	if (ret)
 		return ret;
 	
@@ -517,6 +517,8 @@ static int stm32f0_pmic_probe(struct i2c_client *i2c_client) {
 			pm_power_off = &stm32f0_pmic_do_poweroff;
 		}
 	}
+	
+	schedule_delayed_work(&pmic->work, msecs_to_jiffies(10));
 	
 	return 0;
 }
