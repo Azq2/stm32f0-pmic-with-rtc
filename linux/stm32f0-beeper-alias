@@ -1,0 +1,4 @@
+#!/bin/bash
+
+[[ -e /dev/input/by-path/platform-pcspkr-event-spkr ]] || ln -s $DEVNAME /dev/input/by-path/platform-pcspkr-event-spkr
+chmod 0666 $DEVNAME

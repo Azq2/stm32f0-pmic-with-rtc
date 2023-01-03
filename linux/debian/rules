@@ -8,6 +8,8 @@ include /usr/share/dpkg/pkg-info.mk
 override_dh_install:
 	dh_install -Xdebian Makefile stm32f0-pmic.c usr/src/stm32f0-pmic-$(DEB_VERSION_UPSTREAM)/
 	dh_install stm32f0-pmic.conf etc/modules-load.d
+	dh_install stm32f0-beeper-alias usr/bin
+	dh_install 70-stm32f0-pmic-beeper.rules etc/udev/rules.d
 
 override_dh_dkms:
 	dh_dkms -V $(DEB_VERSION_UPSTREAM)

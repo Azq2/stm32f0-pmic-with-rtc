@@ -1,0 +1,1 @@
+ATTRS{name}=="PC Speaker", ENV{DEVNAME}!="", TAG+="uaccess", RUN+="/usr/bin/stm32f0-beeper-alias"
