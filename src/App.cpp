@@ -14,6 +14,7 @@
 #include "utils.h"
 
 #include <libopencm3/cm3/systick.h>
+#include <libopencm3/cm3/scb.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/rcc.h>
@@ -128,7 +129,7 @@ void App::checkBatteryTemp(const char *name, int min, int max, Flags flag_lo, Fl
 
 void App::watchdogTask(void *) {
 	iwdg_reset();
-	m_task_watchdog.setTimeout(Config::WATCHDOG_TIMEOUT - 5000);
+	m_task_watchdog.setTimeout(Config::WATCHDOG_TIMEOUT / 2);
 }
 
 void App::irqPulseTask(void *) {
@@ -241,17 +242,21 @@ void App::monitorTask(void *) {
 		}
 	}
 	
-	m_task_analog_mon.setTimeout(next_timeout);
+	allowDeepSleep(false);
+	
 	iwdg_reset();
+	m_task_analog_mon.setTimeout(next_timeout);
 }
 
 void App::allowDeepSleep(bool flag) {
-	if (flag) {
-		m_task_analog_mon.cancel();
-		m_task_watchdog.cancel();
-	} else {
-		m_task_analog_mon.setTimeout(0);
-		m_task_watchdog.setTimeout(0);
+	if (setStateBit(ALLOW_DEEP_SLEEP, flag)) {
+		if (flag) {
+			m_task_analog_mon.cancel();
+			m_task_watchdog.cancel();
+		} else {
+			m_task_analog_mon.setTimeout(0);
+			m_task_watchdog.setTimeout(0);
+		}
 	}
 }
 
@@ -398,8 +403,7 @@ bool App::idleHook(void *) {
 	RTC_BKPXR(1) = (m_state & USER_POWER_OFF);
 	pwr_enable_backup_domain_write_protect();
 	
-	Loop::suspend(true);
-	allowDeepSleep(false);
+	scb_reset_system();
 	return true;
 }
 
@@ -464,11 +468,20 @@ void App::writeReg(void *, uint8_t reg, uint32_t value) {
 }
 
 int App::run() {
-	initHw();
+	// Workaround for disabling IWDG in STOP mode :(
+	if ((RCC_CSR & RCC_CSR_SFTRSTF)) {
+		RCC_CSR |= RCC_CSR_RMVF;
+		Loop::suspend(true);
+		while (true);
+		return 0;
+	}
+	RCC_CSR |= RCC_CSR_RMVF;
 	
 	iwdg_reset();
 	iwdg_set_period_ms(Config::WATCHDOG_TIMEOUT);
 	iwdg_start();
+	
+	initHw();
 	
 	RTC::init();
 	Loop::init();

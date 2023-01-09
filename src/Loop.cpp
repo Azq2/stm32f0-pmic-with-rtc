@@ -71,6 +71,8 @@ void Loop::run() {
 }
 
 void Loop::suspend(bool standby) {
+	rcc_periph_clock_enable(RCC_PWR);
+	
 	pwr_clear_standby_flag();
 	pwr_clear_wakeup_flag();
 	pwr_enable_wakeup_pin();

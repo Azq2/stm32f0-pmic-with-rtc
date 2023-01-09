@@ -31,7 +31,10 @@ class App {
 			BAT_CHARGE_HIGH_TEMP	= 1 << 10,
 			
 			// Key
-			PWR_KEY_PRESSED			= 1 << 11
+			PWR_KEY_PRESSED			= 1 << 11,
+			
+			// Deep sleep
+			ALLOW_DEEP_SLEEP		= 1 << 12
 		};
 		
 		enum Regs {

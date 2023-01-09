@@ -2,12 +2,12 @@
 
 #include "ConfigDef.h"
 
-#define DEBUG						0	// USART debug
+#define DEBUG						1	// USART debug
 #define DEBUG_CALIBRATE_RTC			0	// Output RTC freq to USART_TX pin
 #define DEBUG_CALIBRATE_BAT_TEMP	0	// Output bat temp in voltage
 
 namespace Config {
-	constexpr uint32_t WATCHDOG_TIMEOUT				= 60000;
+	constexpr uint32_t WATCHDOG_TIMEOUT				= 30000;
 	
 	constexpr uint32_t CHARGING_BAD_TEMP_TIMEOUT	= 1000 * 60 * 30;
 	constexpr uint32_t CHARGING_LOST_DCIN_TIMEOUT	= 1000 * 5;
