@@ -17,7 +17,7 @@ I2CSlave::WriteCallback I2CSlave::m_write_reg;
 void I2CSlave::init() {
 	rcc_set_i2c_clock_hsi(I2C1);
 	
-	i2c_reset(I2C1);
+	rcc_periph_reset_pulse(RST_I2C1);
 	i2c_peripheral_disable(I2C1);
 	
 	i2c_enable_analog_filter(I2C1);
